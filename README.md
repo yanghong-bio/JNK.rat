@@ -7,7 +7,7 @@ This repository contains the source files for the paper titled **Impact of JNK i
 IThe study we explore the potential therapeutic effect of JNK-IN-5A under high sucrose consumption. To elucidate the systems-wide impact of sucrose overconsumption and JNK-IN-5A treatment, we investigate the intra- and inter-tissue response through integrative analysis of transcriptomics profiles from the metabolically active tissues, including liver and three other extrahepatic tissues, including visceral white adipose tissue (vWAT), skeletal muscle (SkM)) and brain tissues. We further predict the genome-wide metabolic activity changes induced by liquid sucrose ingestion and JNK-IN-5A treatment by establishing a genome-wide metabolic model.
 
 <p align="center">
-  <img src="https://github.com/yanghong-bio/JNK.rat/blob/main/02.Figures/studyoview.png" alt="Overview" width="600">
+  <img src="https://github.com/yanghong-bio/JNK.rat/blob/main/02.Figures/studyoview.png" alt="Overview" width="900">
 </p>
 
 
