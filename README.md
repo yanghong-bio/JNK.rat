@@ -14,13 +14,13 @@ IThe study we explore the potential therapeutic effect of JNK-IN-5A under high s
 ## Repository Structure
 The repository is organized as follows:
 
-- **00.Code**: This directory contains the code used for data processing, statistical analysis, and generation of results. The code is provided in Jupyter Notebook format for reproducibility.
+- **00.Code**: This directory contains the code used for data processing, statistical analysis, and generation of results.
 
-- **01.Data**: This directory contains the datasets used in the study, including genomic, transcriptomic, proteomic, and metabolomic data. The data is available in standard formats for easy access and analysis.
+- **01.Data**: This directory contains the datasets used in the study.
 
 - **02.Figures**: This directory will be used for saving the figures during analysis.
 
-- **03.Results**: This directory contains the results of the RNA-seq analysis.
+- **03.Results**: This directory contains the results of the RNA-seq differential expression analysis.
 
 - **04.Coexpression**: This directory contains the results of the co-expression network analysis.
 
