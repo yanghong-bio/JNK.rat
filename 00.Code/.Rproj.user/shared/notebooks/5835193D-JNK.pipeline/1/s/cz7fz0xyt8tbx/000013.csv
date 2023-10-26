@@ -1,0 +1,8 @@
+"0","com_p = ggarrange(fig1,fig2,fig3,fig4,common.legend = T,
+                 nrow = 2, ncol = 2, legend = 'right')
+"
+"2","Warning: [38;5;233mRemoved 9 rows containing missing values (`geom_path()`).[39m"
+"2","Warning: [38;5;233mRemoved 9 rows containing missing values (`geom_path()`).[39m"
+"2","Warning: [38;5;233mRemoved 9 rows containing missing values (`geom_path()`).[39m"
+"2","Warning: [38;5;233mRemoved 9 rows containing missing values (`geom_path()`).[39m"
+"2","Warning: [38;5;233mRemoved 3 rows containing missing values (`geom_path()`).[39m"

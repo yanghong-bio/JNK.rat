@@ -1,0 +1,3955 @@
+---
+title: "JNK.pipeline"
+author: "Hong"
+date: "2022-10-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Loading packages
+
+```{r, include=FALSE}
+pkgs = c("tidyverse","hablar","sjmisc","xlsx","gplots","ggpubr","ggbiplot","corrplot","grid","gridExtra","readxl","EnhancedVolcano","ggVennDiagram","RColorBrewer","clusterProfiler","pheatmap","DESeq2","grid","ggh4x","ggpolypath","ggplot2","venn","piano","qdapTools","openxlsx","rstatix","moonBook","webr","ComplexHeatmap","UpSetR","GEOquery","DGEobj.utils","data.table","magrittr","gprofiler2","umap","hablar","circlize","limma","factoextra","Amelia","VIM","missMDA","naniar","xcms","RCy3","DescTools","outliers","tximport","jsonlite","biomaRt","ReactomePA","WGCNA","Orthology.eg.db","AnnotationDbi","org.Rn.eg.db","Hmisc","fgsea","MotrpacRatTraining6moData","ggforce","aplot","paletteer","enrichR","rrvgo","ggthemes","pals")
+for (i in pkgs){
+  if(! i %in% installed.packages()){
+    BiocManager::install(i, ask = F, update = F)
+  }
+}
+invisible(lapply(pkgs, function(x) library(x, character.only=TRUE)))
+rm(pkgs, i)
+source('functions.R')
+```
+
+### Plasma parameters
+
+### Kruskall-Wallis test followed by
+
+```{r}
+file_name = '../01.Data/24.10.22 HSD PLUS JNK STUDY.data.xlsx'
+plasma_data = read_excel(file_name, sheet = 2, skip = 1)[,c(2,4:28)]
+
+data_summary = plasma_data %>% gather('pars','value',-Group) %>% 
+  convert(num(value)) %>% group_by(Group,pars) %>% 
+  summarise_each(funs(mean(., na.rm = TRUE),sd(., na.rm = TRUE),
+                      se=sd(.,na.rm = TRUE)/sqrt(n()))) %>% 
+  mutate(new = paste0(round(mean,2)," ± ",round(se,2))) %>% 
+  dplyr::select(Group, pars, new) %>% spread(Group,new)
+write.xlsx(data_summary, file = '../03.Results/Clinical.data.summary.xlsx')
+
+pars = colnames(plasma_data)[2:26]
+res_STAT = data.frame()
+for(i in pars) {
+  rm(output_name, pvalue, STAT, temp, plot_par)
+  temp = plasma_data %>% dplyr::select(Group, all_of(i))
+  colnames(temp) = c("Group", "Value")
+  temp = temp %>% mutate(Group = case_when(Group == 'HSD' ~ 'Sucrose',
+                                           Group == 'CD' ~ 'Control',
+                                           Group == 'HSD+JNK_D1' ~ 'Sucrose+JNK_D1',
+                                           Group == 'HSD+JNK_D2' ~ 'Sucrose+JNK_D2')) %>% 
+    mutate(Group = factor(Group, levels = c("Sucrose","Control","Sucrose+JNK_D1","Sucrose+JNK_D2")))
+  
+  pvalue = kruskal.test(Value ~ Group, data = temp)$p.value
+  if (pvalue < 0.05) {
+    STAT = as.data.frame(
+      DunnettTest(x=temp$Value, g=temp$Group)$HSD) %>%
+      rownames_to_column(., var = 'compar') %>% 
+      separate(compar, into = c("group1","group2"), sep = '-') %>%
+      convert(num(pval)) %>% 
+      filter(pval < 0.05) %>% 
+      #mutate(y.position = 75) %>% # MCV
+      #mutate(y.position = 48) %>% # BUN
+      #mutate(y.position = 5) %>% # Uric acid
+      #mutate(y.position = 0.08) %>% # Direct bilirubin
+      mutate(y.position = c(335, 355, 375)) %>% # TG
+      #mutate(y.position = c(3850, 3950)) %>% # LDH
+      #mutate(y.position = 170) %>% # ALT
+      #mutate(y.position = 530) %>% # AST
+      #mutate(y.position = 350) %>% # ALP
+      mutate(p.label = paste0('p = ', scientific(pval, digits = 2))) %>% 
+      sig_label(., 'pval')
+
+    
+    # STAT = temp %>% dunn_test(Value ~ Group) %>%
+    #   mutate(.y. = i) %>% 
+    #   add_xy_position(x = 'Group')  %>%
+    #   filter(!(group1 == 'CD' & str_detect(group2, 'HSD\\+')))
+    temp$Group = factor(temp$Group, levels = c("CD","HSD","HSD+JNK_D1","HSD+JNK_D2"))
+    plot_par =  ggplot(temp, aes(Group, Value)) +
+      geom_boxplot(outlier.shape = NA) +
+      #geom_jitter(color="black", size=0.4, alpha=0.9) +
+      stat_pvalue_manual(STAT,label = 'p.signif',
+        hide.ns = TRUE,label.size = 5,tip.length = 0.01) +
+       geom_point(aes(fill = Group),size = 3.5,shape = 21, stroke = 0,
+                  position = position_jitterdodge(dodge.width = .8)) +
+      labs(y = paste0('Plasma ', i)) +
+      theme_bw() +
+      plot_theme('nogrid') +
+      scale_fill_manual(values = colorstudy('oldGroup')) +
+      scale_y_continuous(expand = expansion(mult = c(0.08, 0.1))) +
+      rremove('x.ticks')
+    
+    output_name = paste0('../02.Figures/Biochemistry/', i, '.pdf')
+    ggsave(plot_par, filename = output_name, width = 2.5, height = 2.2)
+    save_name = paste0('../02.Figures/Biochemistry/', i, '.Rdata')
+    save(plot_par, STAT, temp, i, file = save_name)
+  } else{
+    temp$Group = factor(temp$Group, levels = c("CD","HSD","HSD+JNK_D1","HSD+JNK_D2"))
+    plot_par =  ggplot(temp, aes(Group, Value)) +
+      geom_boxplot(outlier.shape = NA) +
+      geom_point(aes(fill = Group),size = 3.5,shape = 21, stroke = 0,
+        position = position_jitterdodge()) +
+      labs(y = paste0('Plasma ', i)) +
+      theme_bw() +
+      plot_theme('nogrid')+
+      scale_fill_manual(values = colorstudy('oldGroup')) +
+      scale_y_continuous(expand = expansion(mult = c(0.08, 0.1)))
+    output_name = paste0('../02.Figures/Biochemistry/', i, '.pdf')
+    ggsave(plot_par, filename = output_name, width = 2.5, height = 2.5)
+    
+  }
+}
+
+list_of_dataset = list('Summary' = data_summary, 'Statisis' = res_STAT)
+write.xlsx(list_of_dataset, '../03.Results/00.summary.STAT.plasma.parameters.xlsx')
+```
+
+### Body weights across experimental days
+
+```{r}
+BW = read.xlsx('../01.Data/HSD 7 September 2022 body weight.xlsx') %>% 
+  dplyr::select(-Mice) %>% 
+  group_by(Group, Time) %>% 
+  summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) %>% 
+  mutate(Time = str_replace(Time, 'Day','')) %>% 
+  mutate(Time = factor(Time, levels = c(1,4,7,10,13,16,19,22,25,28,31,
+                                        34,37,40,43,46)))
+
+BW_p =  BW %>% ggplot(., aes(Time, mean, group=Group, color = Group)) +
+  geom_line()+
+  geom_pointrange(aes(ymin=mean-se, ymax=mean+se), size = .3) +
+  scale_color_manual(values = colorstudy('oldGroup')) +
+  theme_bw() +
+  labs(x = 'Days', y = 'Body Weight (Gram)') +
+  plot_theme('nogrid') +
+  ylim(200, 350)
+  
+ggsave(BW_p, filename = '../02.Figures/00.bodyWeight.pdf', width = 3.5, height = 3)
+```
+
+### Body weights across experimental Weeks
+
+```{r}
+BW = read.xlsx('../01.Data/HSD 7 September 2022 body weight.xlsx') %>% 
+  dplyr::select(-c(Mice, Time)) %>% 
+  group_by(Group, Week) %>% 
+  summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) %>% 
+  mutate(Week = str_replace(Week, 'Week ','')) %>% 
+  mutate(Week = factor(Week, levels = c("1","2","3","4","5","6","7")))
+
+BW_p =  BW %>% ggplot(., aes(Week, mean, group=Group, color = Group)) +
+  geom_line()+
+  geom_pointrange(aes(ymin=mean-se, ymax=mean+se), size = .3) +
+  scale_color_manual(values = colorstudy('oldGroup')) +
+  theme_bw() +
+  labs(x = 'Weeks', y = 'Body Weight (Gram)') +
+  plot_theme('nogrid') +
+  ylim(200, 350)
+  
+ggsave(BW_p, filename = '../02.Figures/00.bodyWeight.weeks.pdf', width = 4, height = 2.5)
+
+
+
+BW_STAT = read.xlsx('../01.Data/HSD 7 September 2022 body weight.xlsx') %>% 
+  filter(Week == 'Week 2') %>% 
+  dplyr::select(-c(Time, Week)) %>% 
+  group_by(Mice, Group) %>% 
+  summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) %>% 
+  mutate(Group = factor(Group, levels = c("HSD","CD",
+                                          "HSD+JNK_D1","HSD+JNK_D2")))
+
+```
+
+### metadata for RNA-seq
+
+```{r}
+metadata = read.table('../01.Data/All_fastq.txt',header = F,sep = '\t') %>%
+  filter(str_detect(V1, 'R1_001')) %>% 
+  mutate(ID = str_replace(V1, '.fastq.gz', '')) %>%
+  mutate(ID = str_replace(ID, '_L00[0-9]_R1_001', '')) %>% 
+  separate(ID,c("Group","SampleID","Tissue","other"),"_") %>%
+  mutate(Group = case_when(Group == 'Ctrl' ~ "CD",
+                           Group == 'HSDCtrl' ~ "HSD",
+                           Group == 'JNK30mg' ~ "HSD+JNK_D1",
+                           Group == 'JNK60mg' ~ "HSD+JNK_D2",
+                           TRUE ~ "Check")) %>% 
+  mutate(ID = str_replace(V1, '.fastq.gz', ''))
+write.xlsx(metadata, file = '../01.Data/metadata.xlsx')
+```
+
+### Loading data, generating txi_kallisto (from JNK project)
+
+```{r}
+metadata = read_excel('../01.Data/metadata.xlsx')
+mapping_T2G = read.table("../01.Data/ensgName_enst_proteinCoding_rat.107.txt", 
+                         sep = '\t', header = T)[,2:1] %>% filter(Gene.name != '')
+files = file.path("/Volumes/Disk3_HY/JNK/kallisto_results",
+                  metadata$ID, "abundance.tsv")
+names(files) = metadata$ID
+txi_kallisto = tximport(files, type = "kallisto", tx2gene = mapping_T2G, ignoreTxVersion = T)
+
+files.info = file.path("/Volumes/Disk3_HY/JNK/kallisto_results", metadata$ID, "run_info.json")
+names(files.info) = metadata$ID
+alignment_info = tibble(sra_Run = metadata$ID, n_processed = rep(0, 176), n_pseudoaligned = rep(0, 176), n_unique = rep(0, 176), p_pseudoaligned = rep(0, 176), p_unique = rep(0, 176))
+for(i in 1:nrow(alignment_info)){
+  temp <- fromJSON(files.info[i])
+  alignment_info[i, "n_processed"] <- temp[["n_processed"]]
+  alignment_info[i, "n_pseudoaligned"] <- temp[["n_pseudoaligned"]]
+  alignment_info[i, "n_unique"] <- temp[["n_unique"]]
+  alignment_info[i, "p_pseudoaligned"] <- temp[["p_pseudoaligned"]]
+  alignment_info[i, "p_unique"] <- temp[["p_unique"]]
+}
+
+write.xlsx(alignment_info, file = '../01.Data/JNK.ran.seq.alignmentInfo.xlsx')
+save(txi_kallisto, file = '../01.Data/JNK.ran.seq.txi.Rdata')
+```
+
+### Differential expression analysis
+
+```{r}
+load('../01.Data/JNK.ran.seq.txi.Rdata')
+
+DESeq_tissue = function(tissue, c1, c2) {
+  count = txi_kallisto$counts %>% as.data.frame() 
+  
+  #### select tissue-based count
+  metadata = read_excel('../01.Data/metadata.xlsx') %>% 
+    filter(Tissue == all_of(tissue)) %>% filter(Note == 'Y')
+  
+  count.filter = count[, metadata$ID]
+  
+  rownames(metadata) = metadata$ID
+  conds = as.factor(metadata$Group)
+  coldata <- data.frame(row.names = rownames(metadata), conds)
+  dds <-
+    DESeqDataSetFromMatrix(
+      countData = round(as.matrix(count.filter)),
+      colData = coldata,
+      design =  ~ conds)
+      
+  dds <- DESeq(dds)
+  save(dds, file = paste0('../03.Results/DESeq.dds.',tissue,'.Rdata'))
+
+  #  PCA analysis
+  vsd <- vst(dds)
+  
+  pcadata <- plotPCA(vsd, intgroup = c("conds"), returnData = TRUE)
+  percentVar <- round(100 * attr(pcadata, "percentVar"))
+  pcadata_p <-
+    ggplot(pcadata, aes(x = PC1,y = PC2,color =factor(conds))) +
+    stat_ellipse(geom="polygon",level=0.95,alpha=0.05,lwd = .1)+
+    geom_point(size = 2, aes(color = factor(conds))) +
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.title = element_text(size = 16, color = 'black'),
+      legend.text = element_text(size = 12, color = 'black')) +
+    theme_bw() +
+    scale_color_manual(values = colorstudy('oldGroup')) +
+    labs(shape = "Group_lable",color = 'Group_lable',fill = 'Group_fill') +
+    theme(
+      legend.position = "right",
+      legend.title = element_blank(),
+      axis.text = element_text(color = 'black')) +
+    guides(fill = "none")
+  
+  ggsave(
+    pcadata_p,
+    filename = paste0('../02.Figures/02.PCA_dot_CountBased.', tissue, '.pdf'),
+    height = 2.8,
+    width = 4.2
+  )
+   pcadata_p_name <-
+    ggplot(pcadata, aes(x = PC1,y = PC2,color = factor(conds), group = factor(conds))) +
+    geom_point(size = 3, aes(fill = factor(conds))) +
+    geom_label_repel(aes(label = name),
+                     box.padding = 0.35,
+                     point.padding = 0.5,
+                     segment.color = 'grey50') +
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+    theme(
+      axis.text.x = element_blank(),
+      axis.title = element_text(size = 16),
+      legend.text = element_text(size = 12)) +
+    theme_bw() +
+    scale_color_manual(values = colorstudy('oldGroup')) +
+    labs(shape = "Group_lable",color = 'Group_lable',fill = 'Group_fill') +
+    theme(
+      legend.position = "right",
+      legend.title = element_blank(),
+      axis.text = element_text(color = 'black')) +
+    guides(fill = "none")
+  
+  ggsave(
+    pcadata_p_name,
+    filename = paste0('../02.Figures/02.PCA_dot_CountBased.',
+                      tissue, '.name.pdf'),
+    height = 8,
+    width = 10
+  )
+  
+  DEseq_compare <- function(dds, cond1, cond2) {
+    res = results(dds, contrast = c('conds', cond1, cond2))
+    res = data.frame(res)
+    res = res %>% mutate(gene_names = rownames(.)) %>% dplyr::select(gene_names, everything())
+    return(res)
+  }
+  
+  pianoAna <- function(DE_res, y) {
+    DESeq_file = DE_res
+    DESeq_file = DESeq_file[, c('log2FoldChange', 'pvalue')]
+    logFC = as.matrix(DESeq_file[, 1])
+    pval = as.matrix(DESeq_file[, 2])
+    rownames(logFC) = (rownames(DESeq_file))
+    rownames(pval) = (rownames(DESeq_file))
+    logFC[is.na(logFC)] <- 0
+    pval[is.na(pval)] <- 1
+    gsaRes <-
+      runGSA(
+        pval,
+        logFC,
+        gsc = y,
+        geneSetStat = "reporter",
+        signifMethod = "nullDist",
+        nPerm = 1000
+      )
+    res_piano = GSAsummaryTable(gsaRes)
+    res_piano$rownames = rownames(res_piano)
+    return(res_piano)
+  }
+  
+  GSC_y <- function(a) {
+    y = loadGSC(a)
+    return(y)
+  }
+  
+  KEGG_file = '../01.Data/Library/KEGG.gmt'
+  TF_file = '../01.Data/Library/trrust_rawdata.mouse.gmt'
+  
+  # list for DEseq result
+  res_list = list()
+  # GROUP
+  cond1 = c1 #First Condition
+  cond2 = c2 #Reference Condition
+  
+  sumRes <- function(dds, cond1, cond2, KEGG, TF) {
+    res = DEseq_compare(dds, cond1, cond2)
+    KEGG_res = pianoAna(res, loadGSC(KEGG))
+    print("KEGG enrichment done!")
+    TF_res = pianoAna(res, GSC_y(TF))
+    print("TF enrichmet done!")
+    return(list(KEGG_res, TF_res))
+  }
+  
+  res_list = sumRes(dds, cond1, cond2, KEGG_file, TF_file)
+  res_list[[3]] = DEseq_compare(dds, cond1, cond2)
+  
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  write.table(res_list[[3]], file = paste0('../03.Results/DESeq.',tissue,'.',
+                                    cond1_format,'vs', cond2,'.txt'),
+              sep = '\t', row.names = F, quote = F)
+  
+  write.xlsx(res_list,file = paste0('../03.Results/DESeq.',tissue,'.',
+                                    cond1_format,'vs', cond2,'.xlsx'))
+}
+
+DESeq_tissue('Liver', 'HSD','CD')
+DESeq_tissue('Liver', 'HSD+JNK_D1','HSD')
+DESeq_tissue('Liver', 'HSD+JNK_D2','HSD')
+
+DESeq_tissue('Brain', 'HSD+JNK_D1','HSD')
+DESeq_tissue('Brain', 'HSD+JNK_D2','HSD')
+DESeq_tissue('Brain', 'HSD','CD')
+
+DESeq_tissue('Adipose', 'HSD+JNK_D1','HSD')
+DESeq_tissue('Adipose', 'HSD+JNK_D2','HSD')
+DESeq_tissue('Adipose', 'HSD','CD')
+
+DESeq_tissue('Muscle', 'HSD+JNK_D1','HSD')
+DESeq_tissue('Muscle', 'HSD+JNK_D2','HSD')
+DESeq_tissue('Muscle', 'HSD','CD')
+```
+
+### Summary of DEGs (Venn diagram)
+
+```{r}
+Venn_DEGs_tissue = function(tissue, cond1, cond2, cond3) {
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  cond3_format = gsub('\\(|\\)|\\+|\\ ', '', cond3)
+  temp_d1 = paste0('../03.Results/DESeq.',tissue,'.',cond1_format,'vs',cond2,'.xlsx')
+  temp_d2 = paste0('../03.Results/DESeq.',tissue,'.',cond3_format,'vs', cond2,'.xlsx')
+  
+  data_d1 = read_excel(temp_d1, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+        log2FoldChange > 0 ~ "HSD+JNK_D1 vs HSD (UP)",
+        log2FoldChange < 0 ~ "HSD+JNK_D1 vs HSD (Down)"))
+  
+  data_d2 = read_excel(temp_d2, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+        log2FoldChange > 0 ~ "HSD+JNK_D2 vs HSD (UP)",
+        log2FoldChange < 0 ~ "HSD+JNK_D2 vs HSD (Down)"))
+  
+  res_venn = list()
+  res_venn[[1]] = data_d1 %>% filter(sig == 'HSD+JNK_D1 vs HSD (UP)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_venn[[2]] = data_d1 %>% filter(sig == 'HSD+JNK_D1 vs HSD (Down)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_venn[[3]] = data_d2 %>% filter(sig == 'HSD+JNK_D2 vs HSD (UP)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_venn[[4]] = data_d2 %>% filter(sig == 'HSD+JNK_D2 vs HSD (Down)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  
+  pdf(file = paste0('../02.Figures/03.venn.DEGs.', tissue, '.pdf'),width = 5,height = 4)
+  venn(res_venn,
+    snames = 'HSD+JNK_D1 vs HSD (UP), HSD+JNK_D1 vs HSD (Down),
+    HSD+JNK_D2 vs HSD (UP), HSD+JNK_D2 vs HSD (Down)',
+    zcolor = "red, blue",box = FALSE,ilcs = .8,sncs = .8,par(mar = c(3, 3, 0, 0)),lwd = 0)
+  dev.off()
+}
+
+Venn_DEGs_tissue("Liver","HSD+JNK_D1","HSD","HSD+JNK_D2")
+Venn_DEGs_tissue("Brain","HSD+JNK_D1","HSD","HSD+JNK_D2")
+Venn_DEGs_tissue("Adipose","HSD+JNK_D1","HSD","HSD+JNK_D2")
+Venn_DEGs_tissue("Muscle","HSD+JNK_D1","HSD","HSD+JNK_D2")
+
+```
+
+### DEGs among comparisons
+
+```{r}
+upset_DEGs_tissue = function(res_list, tissue){
+  m = make_comb_mat(res_list)
+  col_size = comb_size(m)
+  row_size = set_size(m)
+  ht = UpSet(
+    m,
+    set_order =  c('Sucrose (UP)','Sucrose (Down)',
+                   'Sucrose+JNK_D1 (UP)','Sucrose+JNK_D1 (Down)',
+                   'Sucrose+JNK_D2 (UP)', 'Sucrose+JNK_D2 (Down)'),
+    row_names_gp = gpar(fontsize = 10, col = "black"),
+    top_annotation = upset_top_annotation(m, ylim = c(0, max(col_size) *
+                                                        1.2)),
+    right_annotation = upset_right_annotation(
+      m,
+      ylim = c(0, max(row_size) * 1.2),
+      gp = gpar(fill = "#80b1d3")
+    ),
+    pt_size = unit(4, "mm"),
+    lwd = 2,
+    comb_col = '#80b1d3',
+    bg_col = c("white", "#f7f7f7"),
+    bg_pt_col = "#e0e0e0"
+  )
+  pdf(file = paste0('../02.Figures/05.upset.DEGs.', tissue, '.updated.v1.pdf'), 
+      width = 6.4, height = 3.4)
+  ht = draw(ht, padding = unit(c(2, 20, 10, 10), "mm"))
+  
+  col_od = column_order(ht)
+  row_od = row_order(ht)
+  
+  decorate_annotation("intersection_size", {
+    grid.text(
+      col_size[col_od],
+      seq_len(length(col_size)),
+      unit(col_size[col_od], "native") + unit(2, "mm"),
+      default.units = "native",
+      just = "bottom",
+      gp = gpar(fontsize = 9, col = "black")
+    )
+  })
+  decorate_annotation("set_size", {
+    grid.text(
+      row_size[row_od],
+      unit(row_size[row_od], "native") + unit(2, "mm"),
+      rev(seq_len(length(row_size))),
+      default.units = "native",
+      just = "bottom",
+      rot = -90,
+      gp = gpar(fontsize = 9, col = "black")
+    )
+  })
+  dev.off()
+}
+
+DEG_summary_tissue = function(tissue, cond1, cond2, cond3, cond4){
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  cond3_format = gsub('\\(|\\)|\\+|\\ ', '', cond3)
+  temp_d1 = paste0('../03.Results/DESeq.',tissue,'.',cond2,'vs',cond4,'.xlsx')
+  temp_d2 = paste0('../03.Results/DESeq.',tissue,'.',cond1_format,'vs',cond2,'.xlsx')
+  temp_d3 = paste0('../03.Results/DESeq.',tissue,'.',cond3_format,'vs', cond2,'.xlsx')
+  
+  data_d1 = read_excel(temp_d1, sheet = 3) %>%
+    mutate(sig = case_when(
+      log2FoldChange > 0 & padj < 0.01 ~ "Sucrose (UP)",
+      log2FoldChange < 0 & padj < 0.01 ~ "Sucrose (Down)",
+      TRUE ~ 'NO'
+    ))
+  
+  data_d2 = read_excel(temp_d2, sheet = 3) %>%
+    mutate(
+      sig = case_when(
+        log2FoldChange > 0 & padj < 0.01 ~ "Sucrose+JNK_D1 (UP)",
+        log2FoldChange < 0 & padj < 0.01 ~ "Sucrose+JNK_D1 (Down)",
+        TRUE ~ 'NO'
+      )
+    )
+  
+  data_d3 = read_excel(temp_d3, sheet = 3) %>%
+    mutate(
+      sig = case_when(
+        log2FoldChange > 0 & padj < 0.01 ~ "Sucrose+JNK_D2 (UP)",
+        log2FoldChange < 0 & padj < 0.01 ~ "Sucrose+JNK_D2 (Down)",
+        TRUE ~ 'NO'
+      )
+    )
+  res_list = list()
+  res_list[[1]] = data_d1 %>% filter(sig == 'Sucrose (UP)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[2]] = data_d1 %>% filter(sig == 'Sucrose (Down)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[3]] = data_d2 %>% filter(sig == 'Sucrose+JNK_D1 (UP)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[4]] = data_d2 %>% filter(sig == 'Sucrose+JNK_D1 (Down)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[5]] = data_d3 %>% filter(sig == 'Sucrose+JNK_D2 (UP)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[6]] = data_d3 %>% filter(sig == 'Sucrose+JNK_D2 (Down)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  names(res_list) = c("Sucrose (UP)","Sucrose (Down)",
+                      "Sucrose+JNK_D1 (UP)",
+                      "Sucrose+JNK_D1 (Down)",
+                      "Sucrose+JNK_D2 (UP)",
+                      "Sucrose+JNK_D2 (Down)")
+  
+  upset_DEGs_tissue(res_list, tissue)
+  
+  volcano_plot = function(temp_data, c1, c2, tissue){
+    rownames(temp_data) = temp_data$gene_names
+    temp_data_ordered = temp_data[order(temp_data$padj), ]
+    
+    temp_data_ordered = temp_data %>%
+      mutate(genelabels = case_when(
+        gene_names %in% temp_data_ordered[1:10,]$gene_names ~ gene_names,TRUE ~ ""))
+    
+    data_volcano = ggplot(temp_data_ordered) +
+      geom_point(aes(x = log2FoldChange,y = -log10(padj),colour = sig), size = 1) +
+      geom_text_repel(aes(x = log2FoldChange,y = -log10(padj),label = genelabels)) +
+      ggtitle(paste0(c1," vs ",c2)) +
+      xlab("log2(fold change)") +
+      ylab("-log10(padj)") +
+      theme_bw() +
+      scale_color_manual(values = c("#4575b4","#d73027", "grey")) +
+      theme(
+        legend.position = "none",
+        plot.title = element_text(size = 8, hjust = 0.5),
+        axis.title = element_text(size = 8),
+        axis.text = element_text(colour = "black")
+      )
+    ggsave(data_volcano, 
+           filename = paste0('../02.Figures/04.volcano.', c1,'vs',c2, '.',tissue,'.pdf'),
+           width = 4, height = 3.8)
+  }
+  volcano_plot(data_d1, 'Sucrose','Control',tissue)
+  volcano_plot(data_d2, 'Sucrose+JNK_D1','Sucrose',tissue)
+  volcano_plot(data_d3, 'Sucrose+JNK_D2','Sucrose',tissue)
+  
+  table_summary = rbind(as.data.frame(table(data_d1$sig)),
+                        as.data.frame(table(data_d2$sig)),
+                        as.data.frame(table(data_d3$sig)))
+  return(table_summary)
+}
+summary_liver = DEG_summary_tissue('Liver','HSD+JNK_D1','HSD','HSD+JNK_D2','CD')
+summary_brain = DEG_summary_tissue('Brain','HSD+JNK_D1','HSD','HSD+JNK_D2','CD')
+summary_adipose = DEG_summary_tissue('Adipose','HSD+JNK_D1','HSD','HSD+JNK_D2','CD')
+summary_muscle = DEG_summary_tissue('Muscle','HSD+JNK_D1','HSD','HSD+JNK_D2','CD')
+
+phyper(length(intersect(res_list[[2]], res_list[[5]])) - 1,length(res_list[[2]]),length(res_list[[5]]) - length(res_list[[2]]),length(res_list[[5]]),lower.tail = FALSE)
+
+# summary_liver %>% filter(Var1 != 'NO') %>% 
+#   separate(Var1, c("group","dir"), sep = ' \\(') %>% 
+#   mutate(dir = str_replace(dir, '\\)', '')) %>% 
+#   ggplot(., aes(group, ))
+
+# tissue = 'Liver'
+# cond1 = 'HSD+JNK_D1'
+# cond2 = 'HSD'
+# cond3 = 'HSD+JNK_D2'
+# cond4 = 'CD'
+
+Brain = rbind(
+  table(a$sig) %>% as.data.frame() %>% 
+    mutate(Group = 'Sucrose', Percentage = (Freq / 19780) * 100),
+  table(b$sig) %>% as.data.frame() %>% 
+    mutate(Group = 'Sucrose+JNK_D1', Percentage = (Freq /19780) * 100),
+  table(c$sig) %>% as.data.frame() %>% 
+    mutate(Group = 'Sucrose+JNK_D2', Percentage = (Freq /19780) * 100)
+) %>%  ggplot(aes(x = Group, y = Percentage, fill = Var1)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "", y = "Regulated genes (%)") +
+  scale_fill_manual(values = c(
+    "Regulated" = "orange",
+    "Unregulated" = "lightgrey"
+  )) +
+  geom_text(aes(label = round(Percentage, 1)), 
+            position = position_stack(vjust = 0.5), size = 3) +
+  theme_few() + 
+  plot_theme('grid') +
+
+```
+
+### DEGs among comparisons (except for JNK_D2 group)
+
+```{r}
+upset_DEGs_tissue = function(res_list, tissue){
+  m = make_comb_mat(res_list)
+  col_size = comb_size(m)
+  row_size = set_size(m)
+  ht = UpSet(
+    m,
+    set_order =  c('HSD vs CD (UP)','HSD vs CD (Down)',
+                   'HSD+JNK_D1 vs HSD (UP)','HSD+JNK_D1 vs HSD (Down)'),
+    row_names_gp = gpar(fontsize = 9, col = "black"),
+    top_annotation = upset_top_annotation(m, ylim = c(0, max(col_size) *
+                                                        1.1)),
+    right_annotation = upset_right_annotation(
+      m,
+      ylim = c(0, max(row_size) * 1.1),
+      gp = gpar(fill = "#80b1d3")
+    ),
+    pt_size = unit(4, "mm"),
+    lwd = 2,
+    comb_col = '#80b1d3',
+    bg_col = c("white", "#f7f7f7"),
+    bg_pt_col = "#e0e0e0"
+  )
+  pdf(file = paste0('../02.Figures/05.upset.DEGs.', tissue, '.3groups.pdf'), 
+      width = 5.5, height = 3.2)
+  ht = draw(ht, padding = unit(c(2, 20, 10, 10), "mm"))
+  
+  col_od = column_order(ht)
+  row_od = row_order(ht)
+  
+  decorate_annotation("intersection_size", {
+    grid.text(
+      col_size[col_od],
+      seq_len(length(col_size)),
+      unit(col_size[col_od], "native") + unit(2, "mm"),
+      default.units = "native",
+      just = "bottom",
+      gp = gpar(fontsize = 9, col = "black")
+    )
+  })
+  decorate_annotation("set_size", {
+    grid.text(
+      row_size[row_od],
+      unit(row_size[row_od], "native") + unit(2, "mm"),
+      rev(seq_len(length(row_size))),
+      default.units = "native",
+      just = "bottom",
+      rot = -90,
+      gp = gpar(fontsize = 9, col = "black")
+    )
+  })
+  dev.off()
+}
+
+DEG_summary_tissue = function(tissue, cond1, cond2, cond4){
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  temp_d1 = paste0('../03.Results/DESeq.',tissue,'.',cond2,'vs',cond4,'.xlsx')
+  temp_d2 = paste0('../03.Results/DESeq.',tissue,'.',cond1_format,'vs',cond2,'.xlsx')
+  
+  data_d1 = read_excel(temp_d1, sheet = 3) %>%
+    mutate(sig = case_when(
+      log2FoldChange > 0 & padj < 0.01 ~ "HSD vs CD (UP)",
+      log2FoldChange < 0 & padj < 0.01 ~ "HSD vs CD (Down)",
+      TRUE ~ 'NO'
+    ))
+  
+  data_d2 = read_excel(temp_d2, sheet = 3) %>%
+    mutate(
+      sig = case_when(
+        log2FoldChange > 0 & padj < 0.01 ~ "HSD+JNK_D1 vs HSD (UP)",
+        log2FoldChange < 0 & padj < 0.01 ~ "HSD+JNK_D1 vs HSD (Down)",
+        TRUE ~ 'NO'
+      )
+    )
+  res_list = list()
+  res_list[[1]] = data_d1 %>% filter(sig == 'HSD vs CD (UP)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[2]] = data_d1 %>% filter(sig == 'HSD vs CD (Down)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[3]] = data_d2 %>% filter(sig == 'HSD+JNK_D1 vs HSD (UP)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  res_list[[4]] = data_d2 %>% filter(sig == 'HSD+JNK_D1 vs HSD (Down)') %>%
+    dplyr::select(gene_names) %>% distinct() %>% pull()
+  
+  names(res_list) = c("HSD vs CD (UP)","HSD vs CD (Down)",
+                      "HSD+JNK_D1 vs HSD (UP)","HSD+JNK_D1 vs HSD (Down)")
+  
+  upset_DEGs_tissue(res_list, tissue)
+  
+  table_summary = rbind(as.data.frame(table(data_d1$sig)),
+                        as.data.frame(table(data_d2$sig)))
+  return(table_summary)
+}
+summary_liver = DEG_summary_tissue('Liver','HSD+JNK_D1','HSD','CD')
+summary_brain = DEG_summary_tissue('Brain','HSD+JNK_D1','HSD','CD')
+summary_adipose = DEG_summary_tissue('Adipose','HSD+JNK_D1','HSD','CD')
+summary_muscle = DEG_summary_tissue('Muscle','HSD+JNK_D1','HSD','CD')
+
+```
+
+### KEGG enrichenment (for all DEGs, including both up/down-regulated DEGs
+
+```{r}
+# The index between gene symbol to entrezID was downloaded from ensembl using biomart
+symbol2entrezID = read.table('../01.Data/ensgName_entrezID_proteinCoding_rat.107.txt', 
+                             sep = '\t', header = T) %>% distinct() %>% 
+  filter(!is.na(NCBI.gene..formerly.Entrezgene..ID)) %>% 
+  filter(Gene.name != '')
+
+symbol2entrezID = symbol2entrezID[!duplicated(symbol2entrezID$Gene.name),]
+
+res_list_liver  = list()
+res_list_muscle = list()
+res_list_brain = list()
+res_list_adipose = list()
+
+summary_table = data.frame(Var1 = '', Freq = '', tissue = '')
+
+KEGG_DEGs_tissue = function(tissue, cond1, cond2){
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  temp_d1 = paste0('../03.Results/DESeq.',tissue,'.',cond1_format,'vs',cond2,'.xlsx')
+  
+  data_d1 = read_excel(temp_d1, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+      log2FoldChange > 0 ~ paste0(cond1, " vs ", cond2, " (UP)"),
+      log2FoldChange < 0 ~ paste0(cond1, " vs ", cond2, " (Down)")
+    ))
+  # temp_table = as.data.frame(table(data_d1$sig)) %>%
+  #   mutate(tissue = all_of(tissue))
+  # 
+  # summary_table = rbind(summary_table, temp_table)
+  
+  data_d1_ID = data_d1 %>%
+    left_join(symbol2entrezID,by = c("gene_names" = "Gene.name"),suffix = c(".x", ""))
+  geneList = data_d1_ID$log2FoldChange
+  names(geneList) = as.character(data_d1_ID$NCBI.gene..formerly.Entrezgene..ID)
+  geneList = sort(geneList, decreasing = TRUE)
+  gene = names(geneList)
+  kk = enrichKEGG(
+    gene         = gene,
+    organism     = 'rno',
+    pvalueCutoff = 0.05,
+    qvalueCutoff = 0.05
+  )
+  kk2 = setReadable(kk, 'org.Rn.eg.db', 'ENTREZID')
+  
+  # reactome = enrichPathway(gene         =  gene,
+  #                          organism     = 'rat',
+  #                          pvalueCutoff = 0.05,
+  #                          qvalueCutoff = 0.05,
+  #                          readable     = TRUE)
+  
+  temp = kk2@result %>% filter(p.adjust < 0.05)
+  return(temp)
+}
+  
+res_list_liver[[1]] = KEGG_DEGs_tissue('Liver', 'HSD','CD')
+res_list_liver[[2]] = KEGG_DEGs_tissue('Liver', 'HSD+JNK_D1','HSD')
+res_list_liver[[3]] = KEGG_DEGs_tissue('Liver', 'HSD+JNK_D2','HSD')
+
+names(res_list_liver) = c("HSDvsCD", "HSDJNK_D1vsHSD","HSDJNK_D2vsHSD")
+write.xlsx(res_list_liver, file = '../03.Results/KEGG.enrich.Liver.all.xlsx')
+
+res_list_muscle[[1]] = KEGG_DEGs_tissue('Muscle', 'HSD','CD')
+res_list_muscle[[2]] = KEGG_DEGs_tissue('Muscle', 'HSD+JNK_D1','HSD')
+res_list_muscle[[3]] = KEGG_DEGs_tissue('Muscle', 'HSD+JNK_D2','HSD')
+
+names(res_list_muscle) = c("HSDvsCD", "HSDJNK_D1vsHSD","HSDJNK_D2vsHSD")
+write.xlsx(res_list_muscle, file = '../03.Results/KEGG.enrich.Muscle.all.xlsx')
+
+res_list_brain[[1]] = KEGG_DEGs_tissue('Brain', 'HSD','CD')
+res_list_brain[[2]] = KEGG_DEGs_tissue('Brain', 'HSD+JNK_D1','HSD')
+res_list_brain[[3]] = KEGG_DEGs_tissue('Brain', 'HSD+JNK_D2','HSD')
+
+names(res_list_brain) = c("HSDvsCD", "HSDJNK_D1vsHSD","HSDJNK_D2vsHSD")
+write.xlsx(res_list_brain, file = '../03.Results/KEGG.enrich.Brain.all.xlsx')
+
+
+res_list_adipose[[1]] = KEGG_DEGs_tissue('Adipose', 'HSD','CD')
+res_list_adipose[[2]] = KEGG_DEGs_tissue('Adipose', 'HSD+JNK_D1','HSD')
+res_list_adipose[[3]] = KEGG_DEGs_tissue('Adipose', 'HSD+JNK_D2','HSD')
+
+names(res_list_adipose) = c("HSDvsCD", "HSDJNK_D1vsHSD","HSDJNK_D2vsHSD")
+write.xlsx(res_list_adipose, file = '../03.Results/KEGG.enrich.Adipose.all.xlsx')
+```
+
+### KEGG enrichenment (DEGs separately, either up/down-regulated DEGs)
+
+```{r}
+# The index between gene symbol to entrezID was downloaded from ensembl using biomart
+symbol2entrezID = read.table('../01.Data/ensgName_entrezID_proteinCoding_rat.107.txt', 
+                             sep = '\t', header = T) %>% distinct() %>% 
+  filter(!is.na(NCBI.gene..formerly.Entrezgene..ID)) %>% 
+  filter(Gene.name != '')
+
+symbol2entrezID = symbol2entrezID[!duplicated(symbol2entrezID$Gene.name),]
+
+res_list_liver  = list()
+res_list_muscle = list()
+res_list_brain = list()
+res_list_adipose = list()
+
+KEGG_DEGs_tissue = function(tissue, cond1, cond2, dir){
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  temp_d1 = paste0('../03.Results/DESeq.',tissue,'.',cond1_format,'vs',cond2,'.xlsx')
+  
+  data_d1 = read_excel(temp_d1, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+      log2FoldChange > 0 ~ paste0(cond1, " vs ", cond2, " (UP)"),
+      log2FoldChange < 0 ~ paste0(cond1, " vs ", cond2, " (Down)")
+    )) %>% filter(str_detect(sig, dir))
+  # temp_table = as.data.frame(table(data_d1$sig)) %>%
+  #   mutate(tissue = all_of(tissue))
+  # 
+  # summary_table = rbind(summary_table, temp_table)
+  data_universe = read_excel(temp_d1, sheet = 3)  %>% 
+    left_join(symbol2entrezID,by = c("gene_names" = "Gene.name"),
+              suffix = c(".x", "")) %>% 
+    filter(!is.na(NCBI.gene..formerly.Entrezgene..ID))
+
+  data_d1_ID = data_d1 %>%
+    left_join(symbol2entrezID,by = c("gene_names" = "Gene.name"),
+              suffix = c(".x", "")) %>% 
+    filter(!is.na(NCBI.gene..formerly.Entrezgene..ID))
+  
+  print(paste0("Number of genes between ",cond1, "vs", cond2, " ", dir, ' is:', length(data_d1_ID$NCBI.gene..formerly.Entrezgene..ID)))
+  
+  print(paste0("Number of gene background is:", length(data_universe$NCBI.gene..formerly.Entrezgene..ID)))
+  
+  geneList = data_d1_ID$log2FoldChange
+  names(geneList) = as.character(data_d1_ID$NCBI.gene..formerly.Entrezgene..ID)
+  geneList = sort(geneList, decreasing = TRUE)
+  gene = names(geneList)
+  kk = enrichKEGG(
+    gene         = gene,
+    organism     = 'rno',
+    universe = as.character(data_universe$NCBI.gene..formerly.Entrezgene..ID),
+    pvalueCutoff = 0.05,
+    qvalueCutoff = 0.05
+  )
+  kk2 = setReadable(kk, 'org.Rn.eg.db', 'ENTREZID')
+  
+  # reactome = enrichPathway(gene         =  gene,
+  #                          organism     = 'rat',
+  #                          pvalueCutoff = 0.05,
+  #                          qvalueCutoff = 0.05,
+  #                          readable     = TRUE)
+  
+  temp = kk2@result %>% filter(p.adjust < 0.05)
+  return(temp)
+}
+  
+KEGG_vis_tissue = function(ori_list){
+  index = c("Cancer","Infection","Disease","Glioma","Influenza",
+            "Arrhythmogenic Right Ventricular","Amyotrophic lateral sclerosis","Asthma","Leishmaniasis","Viral myocarditis","Toxoplasmosis","Diabetic cardiomyopathy",
+            "syndrome","diabetic complications","Cocaine addiction","Pertussis","Malaria",
+            "Bacterial invasion","Hepatitis","Carcinoma","Leukemia",
+            "Dilated Cardiomyopathy","Hypertrophic Cardiomyopathy Hcm",
+            "atherosclerosis","Depression","Melanoma", "Diabetes Mellitus",
+            "Allograft rejection","Rheumatoid arthritis","Spinocerebellar ataxia","Tuberculosis")
+  index = index %>% paste(., collapse = '|')
+  new_list = list()
+  for(i in 1:6){
+    new_list[[i]] = ori_list[[i]] %>% filter(!grepl(index, Description, ignore.case = TRUE))
+  }
+  names(new_list) = names(ori_list)
+  return(new_list)
+}
+
+res_list_liver[[1]] = KEGG_DEGs_tissue('Liver', 'HSD','CD', 'UP')
+res_list_liver[[2]] = KEGG_DEGs_tissue('Liver', 'HSD','CD', 'Down')
+res_list_liver[[3]] = KEGG_DEGs_tissue('Liver', 'HSD+JNK_D1','HSD','UP')
+res_list_liver[[4]] = KEGG_DEGs_tissue('Liver', 'HSD+JNK_D1','HSD','Down')
+res_list_liver[[5]] = KEGG_DEGs_tissue('Liver', 'HSD+JNK_D2','HSD','UP')
+res_list_liver[[6]] = KEGG_DEGs_tissue('Liver', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_liver) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_liver, file = '../03.Results/KEGG.enrich.Liver.up&down.xlsx')
+
+res_list_liver_new = KEGG_vis_tissue(res_list_liver)
+liver_keGG = rbind((res_list_liver_new[[1]] %>% mutate(group = 'HSDvsCD (UP)')),
+                   (res_list_liver_new[[2]] %>% slice_min(p.adjust,n=10) %>% mutate(group = 'HSDvsCD (Down)')),
+                   (res_list_liver_new[[4]] %>% mutate(group = 'HSD+JNK_D1vsHSD (Down)')),
+                   (res_list_liver_new[[6]] %>% mutate(group = 'HSD+JNK_D2vsHSD (Down)'))) %>% 
+  mutate(Description = factor(Description, levels = rev(sort(unique(Description))))) %>% 
+  mutate(group = factor(group, levels = c("HSDvsCD (UP)","HSDvsCD (Down)",
+                                          "HSD+JNK_D1vsHSD (Down)",
+                                          "HSD+JNK_D2vsHSD (Down)"))) %>% 
+  separate(GeneRatio, c("X","Y")) %>% 
+  convert(num(X,Y)) %>% 
+  mutate(GeneRatio = X/Y) %>% 
+  ggplot(., aes(group, Description)) + 
+  geom_point(aes(color = -log10(p.adjust), size = GeneRatio)) +
+  theme_light() +
+  scale_size(range = c(0.1,5)) +
+  scale_x_discrete(labels = c('HSDvsCD (UP)' = 'HSD\nvs\nCD\n(UP)',
+                              'HSDvsCD (Down)' = 'HSD\nvs\nCD\n(Down)',
+                              'HSD+JNK_D1vsHSD (Down)' = 'HSD+JNK_D1\nvs\nHSD\n(Down)',
+                              'HSD+JNK_D2vsHSD (Down)' = 'HSD+JNK_D2\nvs\nHSD\n(Down)')) +
+  plot_theme('grid') +
+  scale_color_continuous(high = "#132B43", low = "#56B1F7")
+ggsave(liver_keGG, filename = '../02.Figures/06.KEGG.DEGs.Liver.pdf',
+       width = 6.6, height = 6.5)
+
+res_list_muscle[[1]] = KEGG_DEGs_tissue('Muscle', 'HSD','CD','UP')
+res_list_muscle[[2]] = KEGG_DEGs_tissue('Muscle', 'HSD','CD','Down')
+res_list_muscle[[3]] = KEGG_DEGs_tissue('Muscle', 'HSD+JNK_D1','HSD','UP')
+res_list_muscle[[4]] = KEGG_DEGs_tissue('Muscle', 'HSD+JNK_D1','HSD','Down')
+res_list_muscle[[5]] = KEGG_DEGs_tissue('Muscle', 'HSD+JNK_D2','HSD','UP')
+res_list_muscle[[6]] = KEGG_DEGs_tissue('Muscle', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_muscle) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_muscle, file = '../03.Results/KEGG.enrich.Muscle.up&down.xlsx')
+
+res_list_muscle_new = KEGG_vis_tissue(res_list_muscle)
+muscle_keGG = rbind((res_list_muscle_new[[1]] %>% mutate(group = 'HSDvsCD (UP)')),
+                     (res_list_muscle_new[[2]] %>% mutate(group = 'HSDvsCD (Down)')),
+                     (res_list_muscle_new[[3]] %>% slice_min(p.adjust,n=10) %>% mutate(group = 'HSD+JNK_D1vsHSD (UP)')),
+                   (res_list_muscle_new[[4]] %>% slice_min(p.adjust,n=10) %>% mutate(group = 'HSD+JNK_D1vsHSD (Down)')),
+                   (res_list_muscle_new[[5]] %>% mutate(group = 'HSD+JNK_D2vsHSD (UP)')),
+                   (res_list_muscle_new[[6]] %>% mutate(group = 'HSD+JNK_D2vsHSD (Down)'))) %>% 
+  mutate(Description = factor(Description, levels = rev(sort(unique(Description))))) %>% 
+  mutate(group = factor(group, levels = c("HSDvsCD (UP)","HSDvsCD (Down)",
+                                          "HSD+JNK_D1vsHSD (UP)","HSD+JNK_D1vsHSD (Down)",
+                                          "HSD+JNK_D2vsHSD (UP)","HSD+JNK_D2vsHSD (Down)"))) %>% 
+  separate(GeneRatio, c("X","Y")) %>% 
+  convert(num(X,Y)) %>% 
+  mutate(GeneRatio = X/Y) %>% 
+  ggplot(., aes(group, Description)) + 
+  geom_point(aes(color = -log10(p.adjust), size = GeneRatio)) +
+  theme_light() +
+  scale_size(range = c(2,6)) +
+  scale_x_discrete(labels = c('HSDvsCD (UP)' = 'HSD\nvs\nCD\n(UP)',
+                              'HSDvsCD (Down)' = 'HSD\nvs\nCD\n(Down)',
+                              'HSD+JNK_D1vsHSD (UP)' = 'HSD+JNK_D1\nvs\nHSD\n(UP)',
+                              'HSD+JNK_D1vsHSD (Down)' = 'HSD+JNK_D1\nvs\nHSD\n(Down)',
+                              'HSD+JNK_D2vsHSD (UP)' = 'HSD+JNK_D2\nvs\nHSD\n(UP)',
+                              'HSD+JNK_D2vsHSD (Down)' = 'HSD+JNK_D2\nvs\nHSD\n(Down)')) +
+  plot_theme('grid') + 
+  scale_color_continuous(high = "#132B43", low = "#56B1F7")
+ggsave(muscle_keGG, filename = '../02.Figures/06.KEGG.DEGs.muscle.pdf', 
+       width = 6.7, height = 5)
+
+res_list_brain[[1]] = KEGG_DEGs_tissue('Brain', 'HSD','CD','UP')
+res_list_brain[[2]] = KEGG_DEGs_tissue('Brain', 'HSD','CD','Down')
+res_list_brain[[3]] = KEGG_DEGs_tissue('Brain', 'HSD+JNK_D1','HSD','UP')
+res_list_brain[[4]] = KEGG_DEGs_tissue('Brain', 'HSD+JNK_D1','HSD','Down')
+res_list_brain[[5]] = KEGG_DEGs_tissue('Brain', 'HSD+JNK_D2','HSD','UP')
+res_list_brain[[6]] = KEGG_DEGs_tissue('Brain', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_brain) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_brain, file = '../03.Results/KEGG.enrich.Brain.up&down.xlsx')
+
+res_list_brain_new = KEGG_vis_tissue(res_list_brain)
+brain_keGG = rbind((res_list_brain_new[[1]] %>% mutate(group = 'HSDvsCD (UP)')),
+                   (res_list_brain_new[[2]] %>% mutate(group = 'HSDvsCD (Down)')),
+                   (res_list_brain_new[[4]] %>% mutate(group = 'HSD+JNK_D1vsHSD (Down)')),
+                   (res_list_brain_new[[6]] %>% mutate(group = 'HSD+JNK_D2vsHSD (Down)'))) %>% 
+  mutate(Description = factor(Description, levels = rev(sort(unique(Description))))) %>% 
+  mutate(group = factor(group, levels = c("HSDvsCD (UP)","HSDvsCD (Down)",
+                                          "HSD+JNK_D1vsHSD (Down)",
+                                          "HSD+JNK_D2vsHSD (Down)"))) %>% 
+  separate(GeneRatio, c("X","Y")) %>% 
+  convert(num(X,Y)) %>% 
+  mutate(GeneRatio = X/Y) %>% 
+  ggplot(., aes(group, Description)) + 
+  geom_point(aes(color = -log10(p.adjust), size = GeneRatio)) +
+  theme_light() +
+  scale_size(range = c(2,6)) +
+  scale_x_discrete(labels = c('HSDvsCD (UP)' = 'HSD\nvs\nCD\n(UP)',
+                              'HSDvsCD (Down)' = 'HSD\nvs\nCD\n(Down)',
+                              'HSD+JNK_D1vsHSD (Down)' = 'HSD+JNK_D1\nvs\nHSD\n(Down)',
+                              'HSD+JNK_D2vsHSD (Down)' = 'HSD+JNK_D2\nvs\nHSD\n(Down)')) +
+  plot_theme('grid') +
+  scale_color_continuous(high = "#132B43", low = "#56B1F7")
+ggsave(brain_keGG, filename = '../02.Figures/06.KEGG.DEGs.brain.pdf', width = 7, height = 4)
+
+res_list_adipose[[1]] = KEGG_DEGs_tissue('Adipose', 'HSD','CD','UP')
+res_list_adipose[[2]] = KEGG_DEGs_tissue('Adipose', 'HSD','CD','Down')
+res_list_adipose[[3]] = KEGG_DEGs_tissue('Adipose', 'HSD+JNK_D1','HSD','UP')
+res_list_adipose[[4]] = KEGG_DEGs_tissue('Adipose', 'HSD+JNK_D1','HSD','Down')
+res_list_adipose[[5]] = KEGG_DEGs_tissue('Adipose', 'HSD+JNK_D2','HSD','UP')
+res_list_adipose[[6]] = KEGG_DEGs_tissue('Adipose', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_adipose) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_adipose, file = '../03.Results/KEGG.enrich.Adipose.up&down.xlsx')
+
+res_list_adipose_new = KEGG_vis_tissue(res_list_adipose)
+adipose_keGG = rbind((res_list_adipose_new[[1]] %>% mutate(group = 'HSDvsCD (UP)')),
+                     (res_list_adipose_new[[2]] %>% mutate(group = 'HSDvsCD (Down)')),
+                     (res_list_adipose_new[[3]] %>% mutate(group = 'HSD+JNK_D1vsHSD (UP)')),
+                   (res_list_adipose_new[[4]] %>% mutate(group = 'HSD+JNK_D1vsHSD (Down)')),
+                   (res_list_adipose_new[[5]] %>% mutate(group = 'HSD+JNK_D2vsHSD (UP)')),
+                   (res_list_adipose_new[[6]] %>% mutate(group = 'HSD+JNK_D2vsHSD (Down)'))) %>% 
+  mutate(Description = factor(Description, levels = rev(sort(unique(Description))))) %>% 
+  mutate(group = factor(group, levels = c("HSDvsCD (UP)","HSDvsCD (Down)",
+                                          "HSD+JNK_D1vsHSD (UP)","HSD+JNK_D1vsHSD (Down)",
+                                          "HSD+JNK_D2vsHSD (UP)","HSD+JNK_D2vsHSD (Down)"))) %>% 
+  separate(GeneRatio, c("X","Y")) %>% 
+  convert(num(X,Y)) %>% 
+  mutate(GeneRatio = X/Y) %>% 
+  ggplot(., aes(group, Description)) + 
+  geom_point(aes(color = -log10(p.adjust), size = GeneRatio)) +
+  theme_light() +
+  scale_size(range = c(1,7)) +
+  scale_x_discrete(labels = c('HSDvsCD (UP)' = 'HSD\nvs\nCD\n(UP)',
+                              'HSDvsCD (Down)' = 'HSD\nvs\nCD\n(Down)',
+                              'HSD+JNK_D1vsHSD (UP)' = 'HSD+JNK_D1\nvs\nHSD\n(UP)',
+                              'HSD+JNK_D1vsHSD (Down)' = 'HSD+JNK_D1\nvs\nHSD\n(Down)',
+                              'HSD+JNK_D2vsHSD (UP)' = 'HSD+JNK_D2\nvs\nHSD\n(UP)',
+                              'HSD+JNK_D2vsHSD (Down)' = 'HSD+JNK_D2\nvs\nHSD\n(Down)')) +
+  plot_theme('grid') + 
+  scale_color_continuous(high = "#132B43", low = "#56B1F7")
+ggsave(adipose_keGG, filename = '../02.Figures/06.KEGG.DEGs.adipose.pdf', width = 8.5, height = 8)
+
+```
+
+### REAC enrichenment (DEGs separately, either for up/down-regulated DEGs)
+
+```{r}
+# The index between gene symbol to entrezID was downloaded from ensembl using biomart
+symbol2entrezID = read.table('../01.Data/ensgName_entrezID_proteinCoding_rat.107.txt', 
+                             sep = '\t', header = T) %>% distinct() %>% 
+  filter(!is.na(NCBI.gene..formerly.Entrezgene..ID)) %>% 
+  filter(Gene.name != '')
+
+symbol2entrezID = symbol2entrezID[!duplicated(symbol2entrezID$Gene.name),]
+
+res_list_liver  = list()
+res_list_muscle = list()
+res_list_brain = list()
+res_list_adipose = list()
+
+REAC_DEGs_tissue = function(tissue, cond1, cond2, dir){
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  temp_d1 = paste0('../03.Results/DESeq.',tissue,'.',cond1_format,'vs',cond2,'.xlsx')
+  
+  data_d1 = read_excel(temp_d1, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+      log2FoldChange > 0 ~ paste0(cond1, " vs ", cond2, " (UP)"),
+      log2FoldChange < 0 ~ paste0(cond1, " vs ", cond2, " (Down)")
+    )) %>% filter(str_detect(sig, dir))
+  # temp_table = as.data.frame(table(data_d1$sig)) %>%
+  #   mutate(tissue = all_of(tissue))
+  # 
+  # summary_table = rbind(summary_table, temp_table)
+  data_universe = read_excel(temp_d1, sheet = 3)  %>% 
+    left_join(symbol2entrezID,by = c("gene_names" = "Gene.name"),
+              suffix = c(".x", "")) %>%
+    filter(!is.na(NCBI.gene..formerly.Entrezgene..ID))
+    
+  data_d1_ID = data_d1 %>%
+    left_join(symbol2entrezID,by = c("gene_names" = "Gene.name"),suffix = c(".x", ""))
+  geneList = data_d1_ID$log2FoldChange
+  names(geneList) = as.character(data_d1_ID$NCBI.gene..formerly.Entrezgene..ID)
+  geneList = sort(geneList, decreasing = TRUE)
+  gene = names(geneList)
+  # kk = enrichKEGG(
+  #   gene         = gene,
+  #   organism     = 'rno',
+  #   pvalueCutoff = 0.05,
+  #   qvalueCutoff = 0.05
+  # )
+  # kk2 = setReadable(kk, 'org.Rn.eg.db', 'ENTREZID')
+  
+  reactome = enrichPathway(gene         =  gene,
+                           organism     = 'rat',
+                           universe     = as.character(data_universe$NCBI.gene..formerly.Entrezgene..ID), 
+                           pvalueCutoff = 0.05,
+                           qvalueCutoff = 0.05,
+                           readable     = TRUE)
+  
+  temp = reactome@result %>% filter(p.adjust < 0.05)
+  return(temp)
+}
+  
+res_list_liver[[1]] = REAC_DEGs_tissue('Liver', 'HSD','CD', 'UP')
+res_list_liver[[2]] = REAC_DEGs_tissue('Liver', 'HSD','CD', 'Down')
+res_list_liver[[3]] = REAC_DEGs_tissue('Liver', 'HSD+JNK_D1','HSD','UP')
+res_list_liver[[4]] = REAC_DEGs_tissue('Liver', 'HSD+JNK_D1','HSD','Down')
+res_list_liver[[5]] = REAC_DEGs_tissue('Liver', 'HSD+JNK_D2','HSD','UP')
+res_list_liver[[6]] = REAC_DEGs_tissue('Liver', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_liver) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_liver, file = '../03.Results/REAC.enrich.Liver.up&down.xlsx')
+
+res_list_muscle[[1]] = REAC_DEGs_tissue('Muscle', 'HSD','CD','UP')
+res_list_muscle[[2]] = REAC_DEGs_tissue('Muscle', 'HSD','CD','Down')
+res_list_muscle[[3]] = REAC_DEGs_tissue('Muscle', 'HSD+JNK_D1','HSD','UP')
+res_list_muscle[[4]] = REAC_DEGs_tissue('Muscle', 'HSD+JNK_D1','HSD','Down')
+res_list_muscle[[5]] = REAC_DEGs_tissue('Muscle', 'HSD+JNK_D2','HSD','UP')
+res_list_muscle[[6]] = REAC_DEGs_tissue('Muscle', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_muscle) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_muscle, file = '../03.Results/REAC.enrich.Muscle.up&down.xlsx')
+
+res_list_brain[[1]] = REAC_DEGs_tissue('Brain', 'HSD','CD','UP')
+res_list_brain[[2]] = REAC_DEGs_tissue('Brain', 'HSD','CD','Down')
+res_list_brain[[3]] = REAC_DEGs_tissue('Brain', 'HSD+JNK_D1','HSD','UP')
+res_list_brain[[4]] = REAC_DEGs_tissue('Brain', 'HSD+JNK_D1','HSD','Down')
+res_list_brain[[5]] = REAC_DEGs_tissue('Brain', 'HSD+JNK_D2','HSD','UP')
+res_list_brain[[6]] = REAC_DEGs_tissue('Brain', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_brain) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_brain, file = '../03.Results/REAC.enrich.Brain.up&down.xlsx')
+
+
+res_list_adipose[[1]] = REAC_DEGs_tissue('Adipose', 'HSD','CD','UP')
+res_list_adipose[[2]] = REAC_DEGs_tissue('Adipose', 'HSD','CD','Down')
+res_list_adipose[[3]] = REAC_DEGs_tissue('Adipose', 'HSD+JNK_D1','HSD','UP')
+res_list_adipose[[4]] = REAC_DEGs_tissue('Adipose', 'HSD+JNK_D1','HSD','Down')
+res_list_adipose[[5]] = REAC_DEGs_tissue('Adipose', 'HSD+JNK_D2','HSD','UP')
+res_list_adipose[[6]] = REAC_DEGs_tissue('Adipose', 'HSD+JNK_D2','HSD','Down')
+
+names(res_list_adipose) = c("HSDvsCD(UP)", "HSDvsCD(Down)", 
+                          "HSDJNK_D1vsHSD(UP)","HSDJNK_D1vsHSD(Down)",
+                          "HSDJNK_D2vsHSD(UP)","HSDJNK_D2vsHSD(Down)")
+write.xlsx(res_list_adipose, file = '../03.Results/REAC.enrich.Adipose.up&down.xlsx')
+```
+
+### Node degree of modules from WGCNA
+
+```{r}
+diag(adjacency) = 0
+
+node_degree = data.frame()
+for(i in unique(merge$colors)){
+  temp = rowSums(adjacency[merge$colors == i,]) %>% 
+    as.data.frame() %>% rownames_to_column(., var = 'gene') %>% 
+    mutate(module = i)
+  node_degree = rbind(node_degree, temp)
+}
+write.xlsx(node_degree, file = paste0('../03.Results/WGCNA.networkNodeDegree.',tissue,'.xlsx'))
+```
+
+### Barplot for specific gene (count-based or TPM-based)
+
+```{r}
+metadata = read_excel('../01.Data/metadata.xlsx') %>% filter(Note == 'Y')
+
+gene_list = c("Creb3l3","Mlxip","Phkg1","Ppp1r3f","Phkb",
+              "Bmp4","Lpl","Pkm","Pklr","Acadl","Acadm",
+              "Acads","Acadvl","Mapk8","Mapk9","Mapk10","Irs1","Irs2",
+              "Srebf1","Srebf2","Mlxip","Mlx","Ppara","Pparg","Ppargc1a","Selenos",
+              "Ppargc1b","Fgf21","Pygm", "Slc27a1","Slc27a5","Fabp4","Fabp1")
+dds_norm = function(tissue){
+  load(paste0('../03.Results/DESeq.dds.',tissue,'.Rdata'))
+  vsd <- assay(vst(dds))
+  
+  vsd_selected = vsd[gene_list,] %>% as.data.frame() %>% rotate_df() %>% 
+  rownames_to_column(., var = 'ID') %>%
+  right_join((metadata %>% filter(Tissue == tissue) %>% dplyr::select(ID, Tissue)),
+             by = 'ID') 
+  return(vsd_selected)
+}
+
+temp_dds = rbind(dds_norm('Brain'), 
+      dds_norm('Liver'),
+      dds_norm('Adipose'),
+      dds_norm('Muscle')) 
+
+#save(temp_dds, file = 'JNK_barplot.dds.Rdata')
+load('JNK_barplot.dds.Rdata')
+#### Get plasma TG
+file_name = '../01.Data/24.10.22 HSD PLUS JNK STUDY.data.xlsx'
+plasma_TG = read_excel(file_name, sheet = 2, skip = 1)[,c(2:28)] %>% 
+  mutate(IDmatched = case_when(Group == 'CD' ~ paste0(Group,Sample),
+                        Group == 'HSD' ~ paste0(Group, Sample),
+                        Group == 'HSD+JNK_D1' ~ paste0(Group, Sample),
+                        Group == 'HSD+JNK_D2' ~ paste0(Group, Sample))) %>% 
+  dplyr::select(IDmatched, Triglyceride)
+
+box_gene = function(selected_gene){
+  temp_dds_p = temp_dds %>%
+    dplyr::select(ID, selected_gene, Tissue) %>%
+    right_join((metadata %>% dplyr::select(ID, Tissue, Group))) %>%
+    reorder_col(., 'Tissue') %>% 
+    reorder_col(., 'Group') %>% 
+    ggplot(., aes(Group, get(selected_gene), color = Group)) +
+    geom_boxplot() +
+    geom_jitter(position = position_jitter(height = .2, width = .15)) +
+    scale_color_manual(values = colorstudy('newGroup')) +
+    facet_wrap(. ~ Tissue , scales = "free_y", nrow = 1) +
+    labs(y = paste0('Relative mRNA levels\n', selected_gene)) +
+    theme_bw() +
+    plot_theme('nogrid') +
+    theme(axis.text.x = element_blank()) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0.3))) +
+    rremove('x.ticks')
+  ggsave(
+    temp_dds_p,
+    filename = paste0('../02.Figures/07.boxplot.tissue.', selected_gene, '.pdf'),
+    width = 8,
+    height = 1.6
+  )
+}
+
+for (i in gene_list) {
+  box_gene(i)
+}
+
+corr_TG2gene = function(selected_gene, tissue,tissue_name){
+  corr_TGgene = temp_dds %>%
+    dplyr::select(ID, selected_gene, Tissue) %>%
+    right_join((metadata %>% dplyr::select(ID, Tissue, Group, SampleID))) %>%
+    mutate(IDmatched = paste0(Group, SampleID)) %>%
+    right_join(plasma_TG) %>%
+    filter(!is.na(ID)) %>%
+    filter(Tissue == tissue) %>%
+    reorder_col(., 'Tissue') %>% 
+    reorder_col(., 'Group')
+  
+  gg = ggscatter(
+    corr_TGgene,
+    x = selected_gene,
+    y = "Triglyceride",
+    add = "reg.line",
+    color = "Group",
+    palette = c("#bbc6ca", "#e5aa06", "#9c9629", "#6674b0"),
+    add.params = list(color = "blue", fill = "lightgray"),
+    conf.int = TRUE
+  ) +
+    stat_cor(method = "spearman",p.accuracy = 0.001,r.accuracy = 0.001,label.y = 300) +
+    labs(x = paste0('Relative mRNA level of ',selected_gene,' (',tissue_name,')'),
+         y = 'Plasma triglyceride') +
+    theme_bw() +
+    theme(
+      axis.title.x = element_text(size = 10, colour = 'black'),
+      axis.title.y = element_text(size = 12, colour = 'black'),
+      axis.text = element_text(size = 10, colour = 'black'),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      strip.background = element_rect(colour = NA, fill = NA))
+  ggsave(gg,
+         filename = paste0('../02.Figures/07.corr.',tissue_name,'.',
+                           selected_gene,'.TG(plasma).pdf'),
+         width = 4,
+         height = 2.2)
+}
+for (i in gene_list) {
+  corr_TG2gene(i,'Adipose','vWAT')
+  corr_TG2gene(i,'Brain','Brain')
+  corr_TG2gene(i,'Liver','Liver')
+  corr_TG2gene(i,'Muscle','SkM')
+}
+```
+
+### WGCNA: Cross-tissue module correlation analysis
+
+```{r}
+metadata = read_excel('../01.Data/metadata.xlsx') %>% filter(Note == 'Y') %>% 
+  separate(ID,c("Group_ori","SampleID","Tissue","other"),"_",
+           extra = "merge", fill = "right") %>%
+  mutate(sample_order = paste0(Group_ori, '_', SampleID)) %>% 
+  dplyr::select(Group, sample_order) %>% distinct() %>% 
+  filter(Group != 'HSD+JNK_D2') 
+
+readRDS_tissue = function(tissue){
+  wgcna = paste0('wgcna.',tissue)
+  wgcna = readRDS(paste0("../10.WGCNA/WGCNA.",tissue,"_results.Rds"))
+  ID_format = data.frame(ID = rownames(wgcna$MEs)) %>% 
+    separate(ID,c("Group_ori","SampleID","Tissue","other"),"_",
+              extra = "merge", fill = "right") %>%
+    mutate(sample_order = paste0(Group_ori, '_', SampleID)) %>% 
+    dplyr::select(sample_order)
+  rownames(wgcna$MEs)= ID_format$sample_order
+  return(wgcna)
+}
+
+# wgcna.Liver = readRDS_tissue("Liver")
+# wgcna.Adipose = readRDS_tissue("Adipose")
+# wgcna.Muscle = readRDS_tissue("Muscle")
+# wgcna.Brain = readRDS_tissue("Brain")
+flattenCorrMatrix = function(cormat, pmat) {
+    ut = upper.tri(cormat)
+    data.frame(
+      row = rownames(cormat)[row(cormat)[ut]],
+      column = rownames(cormat)[col(cormat)[ut]],
+      cor  = (cormat)[ut],
+      p = pmat[ut]
+    )
+}
+
+file_name = '../01.Data/24.10.22 HSD PLUS JNK STUDY.data.xlsx'
+plasma_pars = read_excel(file_name, sheet = 2, skip = 1)[,c(2:28)] %>% 
+  mutate(IDmatched = case_when(Group == 'CD' ~ paste0("Ctrl_",Sample),
+                        Group == 'HSD' ~ paste0("HSDCtrl_", Sample),
+                        Group == 'HSD+JNK_D1' ~ paste0("JNK30mg_", Sample),
+                        Group == 'HSD+JNK_D2' ~ paste0("JNK60mg_", Sample))) %>% 
+  filter(!str_detect(IDmatched,'JNK60mg_')) %>% 
+  dplyr::select(-c(Group, Sample)) %>% 
+  column_to_rownames(., var = 'IDmatched')
+
+corr.tissues = function(tissue1, tissue2,n1 , n2){
+  module_anno.t1 = 
+    read.csv(paste0('../10.WGCNA/Cytoscape.network.',tissue1,'.tsv'),
+                               sep = '\t') %>%
+    dplyr::select(color, cluster_number) %>%
+    mutate(color = paste0('ME', color)) %>%
+    column_to_rownames(., var = 'color')
+  
+  module_anno.t2 = 
+    read.csv(paste0('../10.WGCNA/Cytoscape.network.',tissue2,'.tsv'),
+                                 sep = '\t') %>%
+    dplyr::select(color, cluster_number) %>%
+    mutate(color = paste0('ME', color)) %>%
+    column_to_rownames(., var = 'color')
+  
+  
+  MEs.t1 = readRDS_tissue(tissue1)$MEs[metadata$sample_order, ] %>%
+    rownames_to_column(., var = 'Sample') %>% dplyr::select(Sample, everything()) %>%
+    rotate_df(cn = TRUE) %>%
+    merge(., module_anno.t1, by = 'row.names') %>%
+    column_to_rownames(., var = 'cluster_number') %>%
+    dplyr::select(-Row.names) %>%
+    rotate_df()
+  
+  
+  MEs.t2 = readRDS_tissue(tissue2)$MEs[metadata$sample_order, ] %>%
+    rownames_to_column(., var = 'Sample') %>% dplyr::select(Sample, everything()) %>%
+    rotate_df(cn = TRUE) %>%
+    merge(., module_anno.t2, by = 'row.names') %>%
+    column_to_rownames(., var = 'cluster_number') %>%
+    dplyr::select(-Row.names) %>%
+    rotate_df()
+  
+  res = rcorr(as.matrix(MEs.t1), as.matrix(MEs.t2))
+  res = flattenCorrMatrix(res$r, res$P) %>% as.data.frame() %>%
+    filter(str_detect(row, n1) & str_detect(column, n2))
+}
+
+t1.t2.t3 = rbind(corr.tissues('Liver','Adipose',"Liver","vWAT"),
+                 corr.tissues('Liver','Muscle',"Liver","SkM"),
+                 corr.tissues('Adipose','Muscle',"vWAT","SkM"))
+
+mat_corr = t1.t2.t3 %>% 
+  mutate(pval.adj = p.adjust(p, method='BH')) %>% 
+  filter(pval.adj < 0.05) %>% 
+  dplyr::select(row, column, cor) %>% 
+  spread(column, cor) %>% 
+  column_to_rownames(., var = 'row')
+
+mat_corr[is.na(mat_corr)] = 0
+
+col_fun1 = colorRamp2(c(-1, 0, 1), c("#4575b4","white", "#d73027"), transparency = 0.5)
+chordDiagram(as.matrix(mat_corr),col = col_fun1,
+             link.visible = abs(mat_corr)>0.4,  
+             transparency = 0.5,
+             annotationTrack = "grid", preAllocateTracks = 1)
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+  xlim = get.cell.meta.data("xlim")
+  ylim = get.cell.meta.data("ylim")
+  track.height = 0.01
+  sector.name = get.cell.meta.data("sector.index")
+  circos.text(mean(xlim), ylim[1] + .1, sector.name, cex = .7,
+              facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5))
+}, bg.border = NA)
+
+
+order = c("Liver_M1","Liver_M2","Liver_M3","Liver_M4",
+          "Adipose_M1","Adipose_M2","Adipose_M3","Adipose_M4","Adipose_M5","Adipose_M6",
+          "Muscle_M1","Muscle_M2","Muscle_M3", "Muscle_M4", 
+          "Brain_M1","Brain_M2", "Brain_M3","Brain_M4")
+
+t1.t2.t3 %>% mutate(cor = case_when(p < 0.05 ~ cor, TRUE ~ 0)) %>% 
+  mutate(row = factor(row, levels=order),
+         column = factor(column, levels = rev(order))) %>% 
+  ggplot(., aes(row, column)) + 
+  geom_point(aes(color= cor, size = -log10(p+0.01))) +
+  scale_color_gradient2(mid = 'white', high = 'red', low = 'blue', midpoint = 0) +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  scale_size(range = c(.1,4))
+```
+
+### WGCNA: Hypergenometric test bewteen gene modules and DEGs.
+
+```{r}
+gene2module = function(tissue){
+  tissue2cluster = read.table(
+    file = paste0('../10.WGCNA/WGCNA.',tissue,'.module_connetitivity.tsv'),
+    sep = '\t', header = T) %>% 
+    dplyr::select(Gene, Module)
+  return(tissue2cluster)
+}
+
+DEGs2compar = function(tissue){
+  DEG_list = list()
+  compars = c('HSDvsCD', 'HSDJNK_D1vsHSD')
+  j = 1
+  for(i in compars){
+    file = paste0('../03.Results/DESeq.',tissue,'.',i,'.txt')
+    DEG_res = read.table(file, sep = '\t', header = T) %>% 
+      filter(padj < 0.05 & log2FoldChange >0) %>% 
+      dplyr::select(gene_names) %>% pull()
+    DEG_list[[j]] = DEG_res
+    j = j+1
+    DEG_res = read.table(file, sep = '\t', header = T) %>% 
+      filter(padj < 0.05 & log2FoldChange <0) %>% 
+      dplyr::select(gene_names) %>% pull()
+    DEG_list[[j]] = DEG_res
+    j = j+1
+  }
+  return(DEG_list)
+  rm(j)
+}
+
+HT_DEG2Module = function(tissue, name) {
+  DEGs= DEGs2compar(tissue)
+  Clusters = gene2module(tissue)
+  num_modules = length(unique(Clusters$Module))
+  
+  DEG_all = read.table(
+    paste0('../03.Results/DESeq.', tissue, '.HSDvsCD.txt'),
+    sep = '\t',
+    header = T
+  ) %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  res = matrix(num_modules * 4, nrow = num_modules, ncol = 4)
+  res_p = matrix(num_modules * 4, nrow = num_modules, ncol = 4)
+  res_jaccardIndex = matrix(num_modules * 4, nrow = num_modules, ncol = 4)
+  
+  for (i in 1:num_modules) {
+    temp_m = paste0(name, ',M',i)
+    for (j in 1:4) {
+      N = intersect(DEG_all, Clusters$Gene)
+      #N = DEG_all
+      #N = Clusters$Gene
+      cluster2 = Clusters %>% 
+        filter(Module == temp_m) %>% dplyr::select(Gene) %>% pull(Gene)
+      cluster1 = DEGs[[j]]
+      x = intersect(cluster1, cluster2)
+      un = union(cluster1, cluster2)
+      jaccard_index = length(x) / length(un)
+      m = intersect(N, cluster1)
+      n = intersect(N, cluster2)
+      res_jaccardIndex[i, j] = jaccard_index
+      p.value =
+        phyper(length(x) - 1,length(m),length(N) - length(m),length(n),lower.tail = FALSE)
+      res[i, j] = p.value
+      if (p.value < 0.05) {
+        res_p[i, j] = paste0("*","(",length(x),")")
+      } else{
+        res_p[i, j] = ""
+      }
+    }
+  }
+  names = list()
+  for(q in 1:num_modules){
+    names = append(names, paste0(tissue,'_M',q))
+  }
+  rownames(res) = names
+  colnames(res) = c("HSDvsCD (UP)", "HSDvsCD (Down)",
+                    "HSD_JNK_D1vsHSD (UP)", "HSD_JNK_D1vsHSD (Down)")
+  
+  rownames(res_p) = names
+  colnames(res_p) = c("HSDvsCD (UP)", "HSDvsCD (Down)",
+                    "HSD_JNK_D1vsHSD (UP)", "HSD_JNK_D1vsHSD (Down)")
+  
+  rownames(res_jaccardIndex) = names
+  colnames(res_jaccardIndex) = c("HSDvsCD (UP)", "HSDvsCD (Down)",
+                    "HSD_JNK_D1vsHSD (UP)", "HSD_JNK_D1vsHSD (Down)")
+  
+  res = res %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'DEGs') %>% dplyr::select(DEGs, everything())
+  res_p = res_p %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'DEGs') %>% dplyr::select(DEGs, everything())
+  res_jaccardIndex = res_jaccardIndex %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'DEGs') %>% dplyr::select(DEGs, everything())
+  
+  list_of_dataset = list("res" = res, "res_p" = res_p, "res_jc" = res_jaccardIndex)
+  write.xlsx(list_of_dataset, file = paste0('../10.WGCNA/WGCNA.HyperTest.', tissue, '.xlsx'))
+}
+
+HT_DEG2Module('Adipose')
+HT_DEG2Module('Liver')
+HT_DEG2Module('Muscle','SkM')
+HT_DEG2Module('Brain')
+```
+
+### WGCNA: Module Preervation
+
+```{r}
+loadrds = function(tissue){
+  wgcna = readRDS(file = paste0("../10.WGCNA/WGCNA.",tissue,"_results.Rds"))
+  return(wgcna)
+}
+
+get_mp = function(t1,t2,name1,name2) {
+  multiExpr = list()
+  wgcna1 = loadrds(t1)
+  wgcna2 = loadrds(t2)
+  multiExpr[[name1]] = list(data = wgcna1$adjacency)
+  multiExpr[[name2]] = list(data = wgcna2$adjacency)
+  multiColor = list()
+  multiColor[[name1]] = wgcna1$moduleColors
+  multiColor[[name2]] = wgcna2$moduleColors
+  
+  mp = modulePreservation(
+    multiExpr,
+    multiColor,
+    dataIsExpr = FALSE,
+    referenceNetworks = 1,
+    nPermutations = 100,
+    randomSeed = 1,
+    quickCor = 0,
+    verbose = 3,
+    networkType = "signed",
+    corFnc= "bicor",
+    corOptions = list(maxPOutliers =0.1),
+    maxGoldModuleSize = 3000,
+    maxModuleSize = 3000
+  )
+  return(mp)
+}
+mp = list()
+
+mp$lihc_liri_full = get_mp()
+
+```
+
+### Hypergenometric test bewteen gene modules and DEGs.
+
+```{r}
+### file contains gene and correponsing mudule in a specific tissue
+cox_dir = '../05.Coexpression/'
+gene2module = function(tissue){
+  file_path = paste0(cox_dir, 'Coexp_', tissue)
+  cluster_file = read.table(paste0(file_path, '/clust_pos_cluster.txt'),
+                            skip = 1, header = F, sep = '\t')
+  colnames(cluster_file) = c("Gene", "Module","degree")
+  return(cluster_file)
+}
+
+DEGs2compar = function(tissue){
+  DEG_list = list()
+  compars = c('HSDvsCD', 'HSDJNK_D1vsHSD', 'HSDJNK_D2vsHSD')
+  j = 1
+  for(i in compars){
+    file = paste0('../03.Results/DESeq.',tissue,'.',i,'.txt')
+    DEG_res = read.table(file, sep = '\t', header = T) %>% 
+      filter(padj < 0.01 & log2FoldChange >0) %>% 
+      dplyr::select(gene_names) %>% pull()
+    DEG_list[[j]] = DEG_res
+    j = j+1
+    DEG_res = read.table(file, sep = '\t', header = T) %>% 
+      filter(padj < 0.01 & log2FoldChange <0) %>% 
+      dplyr::select(gene_names) %>% pull()
+    DEG_list[[j]] = DEG_res
+    j = j+1
+  }
+  return(DEG_list)
+  rm(j)
+}
+
+HT_DEG2Module = function(tissue) {
+  DEGs= DEGs2compar(tissue)
+  Clusters = gene2module(tissue)
+  num_modules = length(unique(Clusters$Module))
+  
+  DEG_all = read.table(
+    paste0('../03.Results/DESeq.', tissue, '.HSDvsCD.txt'),
+    sep = '\t',
+    header = T
+  ) %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  res = matrix(num_modules * 6, nrow = num_modules, ncol = 6)
+  res_p = matrix(num_modules * 6, nrow = num_modules, ncol = 6)
+  res_jaccardIndex = matrix(num_modules * 6, nrow = num_modules, ncol = 6)
+  
+  for (i in 0:(num_modules - 1)) {
+    for (j in 1:6) {
+      #N = intersect(DEG_all, Clusters$Gene)
+      #N = DEG_all
+      N = Clusters$Gene
+      cluster2 = Clusters %>% filter(Module == i) %>% dplyr::select(Gene) %>% pull(Gene)
+      cluster1 = DEGs[[j]]
+      x = intersect(cluster1, cluster2)
+      un = union(cluster1, cluster2)
+      jaccard_index = length(x) / length(un)
+      m = intersect(N, cluster1)
+      n = intersect(N, cluster2)
+      i_r = i + 1
+      res_jaccardIndex[i_r, j] = jaccard_index
+      p.value =
+        phyper(length(x) - 1,length(m),length(N) - length(m),length(n),lower.tail = FALSE)
+      res[i_r, j] = p.value
+      if (p.value < 0.05) {
+        res_p[i_r, j] = paste0("*","(",length(x),")")
+      } else{
+        res_p[i_r, j] = ""
+      }
+    }
+  }
+  names = list()
+  for(q in 0:(num_modules-1)){
+    names = append(names, paste0('M',q))
+  }
+  rownames(res) = names
+  colnames(res) = c("Sucrose (UP)", "Sucrose (Down)",
+                    "Sucrose+JNK_D1 (UP)", "Sucrose+JNK_D1 (Down)",
+                    "Sucrose+JNK_D2 (UP)", "Sucrose+JNK_D2 (Down)")
+  
+  rownames(res_p) = names
+  colnames(res_p) = c("HSDvsCD (UP)", "HSDvsCD (Down)",
+                    "HSD_JNK_D1vsHSD (UP)", "HSD_JNK_D1vsHSD (Down)",
+                    "Sucrose+JNK_D2 (UP)", "Sucrose+JNK_D2 (Down)")
+  
+  rownames(res_jaccardIndex) = names
+  colnames(res_jaccardIndex) = c("Sucrose (UP)", "Sucrose (Down)",
+                    "Sucrose+JNK_D1 (UP)", "Sucrose+JNK_D1 (Down)",
+                    "Sucrose+JNK_D2 (UP)", "Sucrose+JNK_D2 (Down)")
+  
+  res = res %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'DEGs') %>% dplyr::select(DEGs, everything())
+  res_p = res_p %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'DEGs') %>% dplyr::select(DEGs, everything())
+  res_jaccardIndex = res_jaccardIndex %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'DEGs') %>% dplyr::select(DEGs, everything())
+  
+  list_of_dataset = list("res" = res, "res_p" = res_p, "res_jc" = res_jaccardIndex)
+  write.xlsx(list_of_dataset, file = paste0('../03.Results/HyperTest.', tissue, '.v3.xlsx'))
+}
+
+HT_DEG2Module('Brain')
+HT_DEG2Module('Liver')
+HT_DEG2Module('Muscle')
+HT_DEG2Module('Adipose')
+```
+
+### Venn digram of individual module with DEGs
+
+```{r}
+load('../02.Figures/16.venn.M0.LivervsDEGs.Rdata')
+#load('../02.Figures/16.venn.M4.AdiposeDEGs.Rdata')
+
+res_venn = res_ven
+p1 = ggVennDiagram(res_venn[1:2],label_alpha=0,label = "count",
+              edge_size = .8,set_size = 3.5,
+              category.names = c("M0_Liver","HSDvsCD\n(UP)")) +
+  theme_void() +
+  scale_fill_gradient2(low = "#A7BFE8", high = "#6190E8") +
+  scale_x_continuous(expand = expansion(mult = .2)) +
+  scale_y_continuous(expand = expansion(mult = .2)) +
+  scale_color_manual(values = c("white","white")) +
+  theme(legend.position = 'none')
+
+p2 = ggVennDiagram(list(res_venn[[1]], res_venn[[3]]),
+                   label_alpha=0,label = "count",
+              edge_size = .8,set_size = 3.5,
+              category.names = c("M0_Liver","HSD+JNK_D1vsHSD\n(Down)")) +
+  theme_void() +
+  scale_fill_gradient2(low = "#F4FAFE", high = "#4981BF") +
+  scale_x_continuous(expand = expansion(mult = .2)) +
+  scale_y_continuous(expand = expansion(mult = .2)) +
+  scale_color_manual(values = c("white","white")) +
+  theme(legend.position = 'none')
+M0_Liver = ggarrange(p1,p2)
+ggsave(M0_Liver, filename = '../02.Figures/16.venn.M0.LiverDEGs.pdf',
+       width = 5.5, height = 3)
+#save(res_venn, file = '../02.Figures/16.venn.M3.LivervsDEGs.Rdata')
+```
+
+### venn digram of intersection between HSD(up/down) and JNK_D2(down/up)
+
+```{r}
+DEGs = DEGs2compar(tissue)
+
+rm(x,x1)
+x = intersect(DEGs[[1]], DEGs[[6]])
+write.table(x, file = paste0('../03.Results/DEGs.',tissue,'.geneList.HSDUPJNK_D2DOWN.txt'),
+            row.names = F, quote = F) 
+x1 = intersect(DEGs[[2]], DEGs[[5]])
+write.table(x1, file = paste0('../03.Results/DEGs.',tissue,'.geneList.HSDDownJNK_D2UP.txt'),
+            row.names = F, quote = F) 
+
+
+
+res_new = list(DEGs[[1]], DEGs[[4]], DEGs[[6]])
+pdf(file = '../02.Figures/23.venn.Liver.tissue.D2.included.HSDupJNKDown.pdf', 
+    width = 2.5, height = 2.5)
+venn(res_new, ilabels = TRUE, zcolor = c(alpha("#ba7a8d",0.4), alpha('#4981BF',0.4), alpha('#4981BF',0.4)),borders = FALSE)
+dev.off()
+
+
+res_new = list(DEGs[[2]], DEGs[[3]], DEGs[[5]])
+pdf(file = '../02.Figures/23.venn.Muscle.tissue.D2.included.HSDDownJNKup.pdf', 
+    width = 2.5, height = 2.5)
+venn(res_new, ilabels = TRUE, zcolor = c(alpha("#4981BF",0.4), alpha('#ba7a8d',0.4), alpha('#ba7a8d',0.4)),borders = FALSE)
+dev.off()
+
+```
+
+### Visualization of HT result
+
+```{r}
+vis_ht = function(tissue){
+  res_jc = read_excel(paste0('../03.Results/HyperTest.',tissue,'.v1.xlsx'), sheet = 3) %>%
+    column_to_rownames(. , var = 'DEGs') %>% 
+    dplyr::select(-starts_with('Sucrose+JNK_D2')) %>% 
+    rotate_df()
+  
+  res_p = read_excel(paste0('../03.Results/HyperTest.',tissue,'.v1.xlsx'), sheet = 2) %>%
+    column_to_rownames(. , var = 'DEGs') %>% 
+    dplyr::select(-starts_with('Sucrose+JNK_D2')) %>% 
+    rotate_df()
+
+  my_palette <- colorRampPalette(c("#f1eef6", "#d0d1e6","#a6bddb", 
+                                 "#74a9cf","#3690c0"))(n = 100)
+  
+  pdf(file = paste0('../02.Figures/27.HT.DEG.',tissue,'.heat.v1.pdf'), width = 8, height = 4.2)
+  res_test <- heatmap.2(as.matrix(res_jc), cellnote = as.matrix(res_p),
+                        revC = F, Rowv = F,
+                        notecol="black", notecex=1,density.info="none", trace="none",
+                        margins = c(8,15), col = my_palette, cexRow = 1.2, 
+                        cexCol = 1.2,srtCol=0, adjCol = c(0.5,0.5),
+                        key.xlab = 'Jaccard Index', key.title ='',
+                        key.par=list(mar=c(2,1,3,6)))
+  dev.off()
+}
+vis_ht('Muscle')
+vis_ht('Liver')
+vis_ht('Adipose')
+vis_ht('Brain')
+```
+
+### Visualization of HT results (dotpot)
+
+```{r}
+vis_ht = function(tissue){
+  res_jc = read_excel(paste0('../03.Results/HyperTest.',tissue,'.v3.xlsx'), sheet = 3) %>%
+    column_to_rownames(. , var = 'DEGs') %>% 
+    dplyr::select(-starts_with('Sucrose+JNK_D2')) %>% 
+    rownames_to_column(., var = 'Module') %>% 
+    gather(DEGs, JC, -Module) %>% 
+    mutate(mapID = paste0(Module, '#', DEGs))
+  
+  res_p = read_excel(paste0('../03.Results/HyperTest.',tissue,'.v3.xlsx'), sheet = 1) %>%
+    column_to_rownames(. , var = 'DEGs') %>% 
+    dplyr::select(-starts_with('Sucrose+JNK_D2')) %>% 
+    rownames_to_column(., var = 'Module') %>% 
+    gather(DEGs, pvalue, -Module) %>% 
+    mutate(mapID = paste0(Module, '#', DEGs)) %>% 
+    dplyr::select(-c("DEGs","Module")) %>% 
+    right_join(res_jc) %>% filter(pvalue < 0.05) %>% 
+    mutate(col = case_when(str_detect(DEGs, 'UP') ~ 'UP',
+                           str_detect(DEGs, "Down") ~ 'Down')) %>% 
+    mutate(Module = fct_rev(Module)) %>% 
+    mutate(DEGs = factor(DEGs, levels = c("Sucrose (UP)","Sucrose (Down)",
+                                          "Sucrose+JNK_D1 (UP)",
+                                          "Sucrose+JNK_D1 (Down)"))) %>% 
+    mutate(col = factor(col, levels = c("UP", "Down"))) %>% 
+    ggplot(., aes(DEGs,Module)) + geom_point(aes(color = col,size = JC)) +
+    theme_bw() +
+    labs(size = 'Jaccard index', y = 'Gene Coxp. Module') +
+    theme(
+          axis.title.y = element_text(color = 'black', size = 9),
+          axis.title.x = element_blank(),
+          axis.text.y = element_text(size = 8, color = 'black'),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 8,
+                                     vjust = 1, color = 'black'),
+          panel.background = element_blank(),
+          legend.title = element_text(color = 'black', size = 9),
+      legend.text = element_text(color = 'black', size = 8),
+      legend.key.height = unit(.4, 'cm'),
+      legend.key.width = unit(.4, 'cm'))+
+    scale_color_manual(values = c('#b20a2c','#1c92d2'))+
+    guides(colour = 'none') 
+}
+SkM = vis_ht('Muscle')
+Liver = vis_ht('Liver')
+vWAT = vis_ht('Adipose')
+Brain = vis_ht('Brain')
+
+comp = ggarrange(Liver, vWAT, SkM,Brain, nrow = 1, common.legend = T, legend = 'right')
+ggsave(comp, file = '../02.Figures/31.coexpression.HT.dot.v3.pdf',
+       width = 8, height = 2.5)
+```
+
+### Prepare input for DAVID enrichment analysis
+
+```{r}
+Venn_DEGs_tissue = function(tissue, cond1, cond2, cond3, cond4) {
+  cond1_format = gsub('\\(|\\)|\\+|\\ ', '', cond1)
+  cond3_format = gsub('\\(|\\)|\\+|\\ ', '', cond3)
+  temp_d1 = paste0('../03.Results/DESeq.',tissue,'.',cond1_format,'vs',cond2,'.xlsx')
+  temp_d2 = paste0('../03.Results/DESeq.',tissue,'.',cond3_format,'vs', cond2,'.xlsx')
+  temp_d3 = paste0('../03.Results/DESeq.',tissue,'.',cond2,'vs', cond4,'.xlsx')
+  
+  print(paste0("temp_d1: ",temp_d1))
+  print(paste0("temp_d2: ",temp_d2))
+  print(paste0("temp_d3: ",temp_d3))
+  
+  data_d1 = read_excel(temp_d1, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+        log2FoldChange > 0 ~ "HSD+JNK_D1 vs HSD (UP)",
+        log2FoldChange < 0 ~ "HSD+JNK_D1 vs HSD (Down)"))
+  
+  data_d2 = read_excel(temp_d2, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+        log2FoldChange > 0 ~ "HSD+JNK_D2 vs HSD (UP)",
+        log2FoldChange < 0 ~ "HSD+JNK_D2 vs HSD (Down)"))
+  
+  data_d3 = read_excel(temp_d3, sheet = 3) %>% filter(padj < 0.01) %>%
+    mutate(sig = case_when(
+        log2FoldChange > 0 ~ "HSD vs CD (UP)",
+        log2FoldChange < 0 ~ "HSD vs CD (Down)"))
+  
+  res_venn = list()
+  res_venn[[1]] = data_d3 %>% filter(sig == 'HSD vs CD (UP)') %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  res_venn[[2]] = data_d3 %>% filter(sig == 'HSD vs CD (Down)') %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  res_venn[[3]] = data_d1 %>% filter(sig == 'HSD+JNK_D1 vs HSD (UP)') %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  res_venn[[4]] = data_d1 %>% filter(sig == 'HSD+JNK_D1 vs HSD (Down)') %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  res_venn[[5]] = data_d2 %>% filter(sig == 'HSD+JNK_D2 vs HSD (UP)') %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  res_venn[[6]] = data_d2 %>% filter(sig == 'HSD+JNK_D2 vs HSD (Down)') %>%
+    dplyr::select(gene_names) %>% pull()
+  
+  return(res_venn)
+  write.xlsx(res_venn, file = paste0('../03.Results/DEGs.',tissue,'.geneList.xlsx'))
+}
+
+res_venn = Venn_DEGs_tissue("Liver","HSD+JNK_D1","HSD","HSD+JNK_D2","CD")
+res_venn = Venn_DEGs_tissue("Brain","HSD+JNK_D1","HSD","HSD+JNK_D2","CD")
+res_venn = Venn_DEGs_tissue("Muscle","HSD+JNK_D1","HSD","HSD+JNK_D2","CD")
+res_venn = Venn_DEGs_tissue("Adipose","HSD+JNK_D1","HSD","HSD+JNK_D2","CD")
+
+write.function = function(tissue, venn_result){
+  gene_list1 = intersect(venn_result[[1]] %>% pull(), venn_result[[4]] %>% pull())
+  
+  write.table(gene_list1, 
+              file = paste0('../03.Results/DEGs.',tissue,'.geneList.HSDUPJNKDOWN.txt'), 
+              sep = '\t', quote = F, row.names = F)
+
+  gene_list2 = intersect(venn_result[[2]] %>% pull(), venn_result[[3]] %>% pull())
+  write.table(gene_list2, 
+              file = paste0('../03.Results/DEGs.',tissue,'.geneList.HSDDownJNKUP.txt'), 
+              sep = '\t', quote = F, row.names = F)
+}
+write.function("Liver",
+               Venn_DEGs_tissue("Liver","HSD+JNK_D1","HSD","HSD+JNK_D2","CD"))
+
+write.function("Brain",
+               Venn_DEGs_tissue("Brain","HSD+JNK_D1","HSD","HSD+JNK_D2","CD"))
+
+write.function("Adipose",
+               Venn_DEGs_tissue("Adipose","HSD+JNK_D1","HSD","HSD+JNK_D2","CD"))
+
+write.function("Muscle",
+               Venn_DEGs_tissue("Muscle","HSD+JNK_D1","HSD","HSD+JNK_D2","CD"))
+
+
+ggVennDiagram(res_venn[1:4],label_alpha=0,label = "count",
+              edge_size = 0,set_size = 3,
+              category.names = c("HSDvsCD\n(UP)","HSDvsCD\n(Down)",
+                                 "HSD+JNK_D1vsHSD\n(UP)", 
+                                 "HSD+JNK_D1vsHSD\n(Down)")) +
+  theme_void() +
+  scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") +
+  #scale_fill_gradient2(low = "grey", mid = "white", high = "brown", midpoint = 0) +
+  scale_x_continuous(expand = expansion(mult = .2))
+
+```
+
+### Visualization of DAVID enrichment
+
+```{r}
+HSDJNK = read.table(file = '../03.Results/DAVID_enrichment/DEGs.Liver.geneList.HSDDownJNKUP.txt',
+                          sep = '\t', header = T) %>% 
+  mutate(dir = 'Up') %>% 
+  rbind(HSDJNK = read.table(file = '../03.Results/DAVID_enrichment/DEGs.Liver.geneList.HSDUPJNKDOWN.txt',
+                          sep = '\t', header = T) %>% mutate(dir = 'Down'))
+
+index = c("Cancer","Infection","Disease","Glioma","Influenza",
+            "Arrhythmogenic Right Ventricular","Amyotrophic lateral sclerosis",
+            "Asthma","Leishmaniasis","Viral myocarditis","Toxoplasmosis",
+            "Diabetic cardiomyopathy","syndrome","diabetic complications",
+            "Cocaine addiction","Pertussis","Malaria","Bacterial invasion",
+            "Hepatitis","Carcinoma","Leukemia","Dilated Cardiomyopathy",
+            "Hypertrophic Cardiomyopathy Hcm","atherosclerosis","Depression",
+            "Melanoma","Diabetes Mellitus","Allograft rejection",
+            "Chemical carcinogenesis - reactive oxygen species",
+            "Rheumatoid arthritis","Spinocerebellar ataxia","Tuberculosis",
+            "Hypertrophic cardiomyopathy","Viral life cycle - HIV-1",
+          "addiction","Measles","immunodeficiency")
+  
+index = index %>% paste(., collapse = '|')
+
+KEGG = 
+  HSDJNK %>% filter(Category == 'KEGG_PATHWAY') %>%
+  filter(FDR < 0.01) %>%
+  separate(Term, c("KEGGID", "Name"), sep = "\\:") %>%
+  filter(!grepl(index, Name, ignore.case = TRUE)) %>% 
+  group_by(dir) %>% 
+  top_n(10, -log10(Benjamini)) %>% 
+  mutate(Name = reorder(Name, Fold.Enrichment)) %>% 
+  ungroup()
+  
+kegg_p =   ggplot() +
+  # geom_bar(stat = 'identity', width = .8,
+  #          aes(Fold.Enrichment, Name,
+  #              fill = -log10(Benjamini)),
+  #          filter(KEGG, dir == "Up")) +
+  # scale_fill_gradientn('Up-regulated\n-log10(padj)',
+  #                      colours = c("#F2E6E9", "#b20a2c")) +
+  #new_scale_fill() +
+  geom_bar(stat = 'identity', width = .8,
+           aes(Fold.Enrichment, Name, fill = -log10(Benjamini)),
+           filter(KEGG, dir == "Down")) +
+  scale_fill_gradientn('Down-regulated\n-log10(padj)',
+                       colours = c("#f2fcfe", "#1c92d2")) +
+  #scale_y_discrete(drop = FALSE) +
+  labs(x = 'Fold Enrichment') +
+  theme_bw() +
+  plot_theme('nogrid') +
+  theme(axis.text.x = element_text(size = 8, color = 'black'),
+        axis.title.x = element_text(size = 10, color = 'black'),
+        axis.title.y = element_blank())+
+  ggtitle('Sucrose+JNK_D1') +
+  ggeasy::easy_center_title() + ggeasy::easy_plot_title_size(8) 
+
+ggsave(kegg_p, filename = '../02.Figures/14.DAVID.KEGG.JNK_D1.Liver.Down.pdf', 
+       height = 2, width = 4.5)  
+```
+
+### Z-score of module genes (except for JNK_D2 group)
+
+```{r}
+work_dir = '../05.Coexpression/'
+Zscore.tissue = function(tissue, name){
+# tpm_file = (paste0('../01.Data/gene_expression_TPM.',tissue,'.txt'))
+# tpm_datta = read.table(tpm_file, header = T, sep = '\t') %>%
+#   column_to_rownames(., var = 'gene_names')
+# Z = t(scale(t(tpm_datta)))
+
+col_anno = read_excel('../01.Data/metadata.xlsx') %>% filter(Note == 'Y') %>% 
+  filter(Tissue == tissue) %>% filter(Group != 'HSD+JNK_D2') %>% 
+  dplyr::select(ID, Group) %>% 
+  column_to_rownames(., var = 'ID') %>% 
+  mutate(Group = case_when(Group == 'CD' ~ 'Control',
+                           Group == 'HSD' ~ 'Sucrose',
+                           Group == 'HSD+JNK_D1' ~ 'Sucrose+JNK_D1'))
+
+load(paste0('../03.Results/DESeq.dds.',tissue,'.Rdata'))
+vsd = assay(vst(dds))
+Z = t(scale(t(vsd)))
+
+GCN_file = paste0(work_dir, 'Coexp_', tissue, '/clust_pos_cluster.txt')
+GCN_module = read.table(GCN_file, header = T, sep = '\t') %>%
+  set_colnames(., c("Gene.name", "Module","Degree_m1")) %>% 
+  mutate(Module = paste0(name,'.', Module))
+  
+gene_list = GCN_module$Gene.name
+
+
+Z.data = as.data.frame(Z)
+Z_selected = Z.data[gene_list,]
+Z_selected = Z_selected %>% filter(across(everything(),~ !is.na(.)))
+
+
+Z_selected = Z_selected[,rownames(col_anno)]
+
+#GCN_module$Module = factor(GCN_module$Module, levels = c(0,1,2,3))
+hmap1 = Heatmap(as.matrix(Z_selected), name = "Z-score",
+                cluster_columns = F,
+                column_split = col_anno,
+                show_row_names = F,
+                show_row_dend = F,
+                column_title_gp = gpar(fontsize = 8),
+                row_title_gp = gpar(fontsize = 8),
+                heatmap_legend_param = list(legend_gp = gpar(fontsize = 8)),
+                row_split = GCN_module$Module,
+                col = circlize::colorRamp2(c(-4,0, 4), c("green","black", "red")), 
+                cluster_rows = F,
+                border = FALSE,
+                row_names_gp = gpar(fontsize = 10), 
+                show_column_names = F)
+
+pdf(paste0('../02.Figures/',"33.RNA_Z.Modules.count.",tissue,".pdf"), 
+    width = 4, height = 5)
+draw(hmap1)
+dev.off()
+}
+Zscore.tissue('Muscle','SkM')
+Zscore.tissue('Liver','Liver')
+Zscore.tissue('Adipose','vWAT')
+Zscore.tissue('Brain','Brain')
+```
+
+### Distribution of correlation coefficient
+
+```{r}
+topx = read.table('../05.Coexpression/Coexp_Muscle/coexp_topx_Liver.txt',
+                        sep = '\t', header = T)
+
+coexp= read.table('../05.Coexpression/Coexp_Liver/coexp_Liver.txt',
+                        sep = '\t', header = T)
+
+
+gghistogram(
+  topx, x = "weight", y = "..density..",
+  add = "mean", rug = TRUE,
+  add_density = TRUE
+  )
+```
+
+### Heatmap for key genes in pathways
+
+```{r}
+rm(list = setdiff(ls(), lsf.str()))
+load('../03.Results/rno.kegg.Rdata')
+#rno04714: Thermogenesis
+#rno00010: Glycolysis / Gluconeogenesis
+#rno00071: fatty acid degradation
+#rno00620: pyruvate metabolism
+#rno00061: fatty acid biosynthesis
+#rno00020: TCA cycle
+gene2pathway = rno.kegg %>% filter(str_detect(Names, 'fatty acid|Fatty acid'))
+gene2pathway = data.frame(pathway = "ROS pathway",
+                          Symbol = c('NDUFA6','GPX4','TXNRD2','NDUFB4','MGST1',
+                                     'GLRX2','ATOX1','PRDX2','HHEX','PRDX4',
+                                     'SELENOS','STK25','CAT','GCLM','LAMTOR5',
+                                     'NQO1','TXNRD1','GSR','MGST1','PRDX6','ERCC2',
+                                     'SOD1','PRDX1','MBP','HMOX2','PTPA')) %>%
+  mutate(Symbol = str_to_title(Symbol))
+
+gene2pathway = data.frame(pathway = 'Insulin-related pathways',
+                          Symbol = c("ACACB","AKT2","ARAF","EIF4E2","ELK1","GYS1",
+                                     "GSK3B","HK2","HRAS","MAP2K1","MAP2K2",
+                                     "MAPK1","AABR07035839.1","OGA",
+                                     "PHKB","PHKG1","PPARA","PPARGC1A","PPARGC1B",
+                                     "PPP1R3A","PPP1R3C","PPP1R3F","PRKAA2","PRKAB2",
+                                     "PRKACA","PRKAG3","PRKAR2A","PRKCE","PRKCQ","PHKA1",
+                                     "PTPN11","PYGM","RAPGEF1","SOS2","PPP1CB",
+                                     "TBC1D4","TRIP10","TSC1","TSC2","IRS2","IRS1")) %>%
+  mutate(Symbol = str_to_title(Symbol))
+
+
+gene2pathway = data.frame(pathway = "fatty acid transporters",
+                          Symbol = c("Slc27a1","Slc27a2","Slc27a3","Slc27a4","Slc27a5",
+                                     "Slc27a6","Fabp1","Fabp2","Fabp3","Fabp4",
+                                     "Fabp6","Fabp7","Fabp9","Fabp12"))
+
+gene2pathway = data.frame(pathway = "JNK pathway",
+                          Symbol = c('Mapk8', 'Mapk9','Map2k4','Map2k7','Jun'))
+
+rm(gene2pathway, comFC, comFC_p, comBaseMean, comFCMean)
+
+
+comFC = rbind(gene2FC('Liver',gene2pathway$Symbol),
+              gene2FC('Muscle',gene2pathway$Symbol),
+              gene2FC('Brain',gene2pathway$Symbol),
+              gene2FC('Adipose',gene2pathway$Symbol)) %>%
+  mutate(p.signif = case_when(padj <= 0.0001 ~ "****",
+                              padj < 0.001 ~ "***",
+                              padj <= 0.01 ~ "**",
+                              padj <= 0.05 ~ "*",
+                              TRUE ~ ""))
+nosigFC = comFC %>% 
+  mutate(sig = case_when(padj < 0.01 ~ "Yes", TRUE ~ "NO")) %>% 
+  group_by(gene_names, sig) %>% tally() %>% 
+  filter(n == 12)
+
+comFC = comFC %>% filter(!(gene_names %in% nosigFC$gene_names)) 
+comFC_p = comFC %>% 
+  mutate(gene_names = factor(gene_names, levels = unique(gene_names))) %>%
+  reorder_col(., 'Tissue') %>% 
+  ggplot(., aes(Tissue, gene_names)) +
+  geom_tile(aes(fill = log2FoldChange)) +
+  geom_text(aes(label = p.signif), size = 2.8) +
+  labs(fill = "log2FC") +
+  #facet_grid(Group~.) +
+  facet_grid(.~Group) +
+  theme_bw() +
+  plot_theme('nogrid') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,vjust = 1,
+                                   size = 8, color = 'black'),
+        axis.text.y = element_text(size = 8, color = 'black'),
+        axis.title = element_blank()) +
+  scale_fill_gradient2(low="#1c92d2", mid="white", high="#b20a2c", na.value = "grey",
+                       limits = c(-2, 2),
+                       oob = scales::squish) 
+ggsave(comFC_p, filename = '../02.Figures/18.DEGs.4tissues.FC.ROS.pdf',
+       width = 5.5, height = 4)
+
+baseMean_p = comFC %>% dplyr::select(gene_names, baseMean, Tissue) %>% 
+  distinct() %>% convert(num(baseMean)) %>%
+  reorder_col(., 'Tissue') %>% 
+  ggplot(., aes(baseMean, gene_names, fill = Tissue)) + 
+  geom_bar(stat = 'identity') +
+  facet_grid(.~Tissue, scales = 'free_x') +
+  facetted_pos_scales(
+    x = list(
+      Tissue == "vWAT" ~ scale_x_continuous(limits = c(0, 5000),
+                                               breaks = c(0,1000,4000), 
+                                               labels = c(0,1000,4000)),
+      Tissue == "Brain" ~ scale_x_continuous(limits = c(0,10000),
+                                             breaks = c(0,4000,8000), 
+                                             labels = c(0,4000,8000)),
+      Tissue == "Liver" ~ scale_x_continuous(limits = c(0,10000),
+                                             breaks = c(1000,7000), 
+                                             labels = c(1000,7000)),
+      Tissue == "SkM" ~ scale_x_continuous(limits = c(0, 5000),
+                                              breaks = c(0,2000,4000), 
+                                              labels = c(0,2000,4000))
+    )
+  ) +
+  theme_bw() + 
+  plot_theme('grid') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,vjust = 1,
+                                   size = 8, color = 'black'),
+        axis.text.y = element_text(size = 8, color = 'black'),
+        axis.title = element_blank(),
+        legend.position = 'none') +
+  scale_fill_manual(values = colorstudy('Tissue'))
+ggsave(baseMean_p, filename = '../02.Figures/18.DEGs.4tissues.baseMean.ROS.pdf',
+       width = 5.5, height = 4)
+```
+
+### Hypergenometric test between gene modules and HPA tissue data
+
+```{r}
+HPA_muscle = read.table('../03.Results/DAVID_enrichment/tissue_category_rna_skeletal.tsv',
+                        sep = '\t', header = T) %>% 
+  mutate(Gene = str_to_title(Gene)) %>% 
+  dplyr::select(Gene) %>% distinct()
+
+### file contains gene and correponsing mudule in a specific tissue
+cox_dir = '../05.Coexpression/'
+gene2module = function(tissue){
+  file_path = paste0(cox_dir, 'Coexp_', tissue)
+  cluster_file = read.table(paste0(file_path, '/clust_pos_cluster.txt'),
+                            skip = 1, header = F, sep = '\t')
+  colnames(cluster_file) = c("Gene", "Module")
+  return(cluster_file)
+}
+
+
+HT_Module2tissueSpecifict = function(tissue) {
+  Clusters = gene2module(tissue)
+  num_modules = length(unique(Clusters$Module))
+  
+  res = matrix(num_modules * 1, nrow = num_modules, ncol = 1)
+  res_p = matrix(num_modules * 1, nrow = num_modules, ncol = 1)
+  res_jaccardIndex = matrix(num_modules * 1, nrow = num_modules, ncol = 1)
+  
+  for (i in 0:(num_modules - 1)) {
+    N = Clusters$Gene
+    cluster2 = Clusters %>% filter(Module == i) %>% dplyr::select(Gene) %>% pull(Gene)
+    cluster1 = HPA_muscle$Gene
+    x = intersect(cluster1, cluster2)
+    un = union(cluster1, cluster2)
+    jaccard_index = length(x) / length(un)
+    m = intersect(N, cluster1)
+    n = intersect(N, cluster2)
+    i_r = i + 1
+    res_jaccardIndex[i_r, 1] = jaccard_index
+    p.value =
+      phyper(length(x) - 1,
+             length(m),
+             length(N) - length(m),
+             length(n),
+             lower.tail = FALSE)
+    res[i_r, 1] = p.value
+    if (p.value < 0.05) {
+      res_p[i_r, 1] = paste0("*", "(", length(x), ")")
+    } else{
+      res_p[i_r, 1] = ""
+    }
+    }
+  names = list()
+  for(q in 0:(num_modules-1)){
+    names = append(names, paste0('M',q))
+  }
+  rownames(res) = names
+  colnames(res) = 'HPA'
+  
+  rownames(res_p) = names
+  colnames(res_p) = 'HPA'
+  
+  rownames(res_jaccardIndex) = names
+  colnames(res_jaccardIndex) = 'HPA'
+  
+  res = res %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'Module') %>% dplyr::select(Module, everything())
+  res_p = res_p %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'Module') %>% dplyr::select(Module, everything())
+  res_jaccardIndex = res_jaccardIndex %>% as.data.frame() %>% 
+    rownames_to_column(., var = 'Module') %>% dplyr::select(Module, everything())
+  
+  list_of_dataset = list("res" = res, "res_p" = res_p, "res_jc" = res_jaccardIndex)
+  write.xlsx(list_of_dataset, file = paste0('../03.Results/HyperTest.',
+                                            tissue, '.specifity.xlsx'))
+}
+
+HT_Module2tissueSpecifict('Muscle')
+```
+
+### Heatmap for study design
+
+```{r}
+a = Z[100:120, 1:5] %>% na.omit() %>% as.data.frame() %>% rownames_to_column(., var = 'Gene') %>% gather("Sample","Exp", -Gene) %>% ggplot(., aes(Sample, Gene)) +geom_tile(aes(fill = Exp), color = 'black', size = .1) + theme_bw() +
+    theme(
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        strip.background = element_rect(colour = NA, fill = NA), 
+        legend.position = 'none')  + rremove('ticks') +
+  scale_fill_gradient2(low = 'white', mid = '#74a9cf', high = '#034e7b', midpoint = 2.4)
+ggsave(a, filename = '../02.Figures/HeatForstudydesign.pdf', width = 1, height = 2.8)
+```
+
+### KEGG pathway and linked genes
+
+```{r}
+rno.kegg <- getGeneKEGGLinks(species.KEGG = "rno")
+rno.kegg$Symbol <- mapIds(org.Rn.eg.db,  rno.kegg$GeneID,
+                     column="SYMBOL", keytype="ENTREZID")
+genes = rno.kegg %>% filter(PathwayID == 'path:rno00071')
+```
+
+### modify plotGSeaTable
+
+```{r}
+#h_gene_sets = msigdbr(species = "rat", category = "C2", subcategory = "CP:KEGG")
+#msigdbr_t2g = h_gene_sets %>% dplyr::distinct(gs_name, gene_symbol) %>% as.data.frame()
+#msigdbr_list = split(x = msigdbr_t2g$gene_symbol, f = msigdbr_t2g$gs_name) 
+# 
+# rno.kegg <- getGeneKEGGLinks(species.KEGG = "rno")
+# rno.kegg$Symbol <- mapIds(org.Rn.eg.db,  rno.kegg$GeneID,
+#                      column="SYMBOL", keytype="ENTREZID") 
+# rno.kegg = rno.kegg %>% distinct()
+
+# rno.kegg = rno.kegg %>% 
+#   mutate(ID = str_replace(PathwayID, 'path:', ''))
+# 
+# rno.kegg.name = data.frame(PathwayID = '', ID = '', Name = '')
+# ids = rno.kegg %>% dplyr::select(PathwayID, ID) %>% distinct()
+# 
+# for(i in 1:length(ids$ID)){
+#   temp = ids[i,]
+#   temp$Name = keggGet(ids[i,]$ID)[[1]]$NAME
+#   rno.kegg.name = rbind(rno.kegg.name, temp)
+# }
+# rno.kegg.name = rno.kegg.name[-1,]
+# temp = rno.kegg.name %>% mutate(Names = str_replace(Name, 
+#                                                     ' - Rattus norvegicus \\(rat\\)',
+#                                                     ''))
+# rno.kegg.name = temp
+# rno.kegg = rno.kegg %>% left_join(rno.kegg.name)
+# rno.kegg_pathway = split(x = rno.kegg$Symbol, f = rno.kegg$Names) 
+# save(rno.kegg, rno.kegg.name, rno.kegg_pathway, file = '../03.Results/rno.kegg.Rdata')
+# # 
+# save.image(file = '../03.Results/rno.kegg.Rdata')
+plotGseaTable_modify <- function(pathways, stats, fgseaRes,
+                          gseaParam=1,
+                          colwidths=c(5, 3, 0.8, 1.2, 1.2),
+                          render=TRUE){
+    rnk <- rank(-stats)
+    ord <- order(rnk)
+
+    statsAdj <- stats[ord]
+    statsAdj <- sign(statsAdj) * (abs(statsAdj) ^ gseaParam)
+    statsAdj <- statsAdj / max(abs(statsAdj))
+
+    pathways <- lapply(pathways, function(p) {
+        unname(as.vector(na.omit(match(p, names(statsAdj)))))
+    })
+
+    # fixes #40
+    pathways <- pathways[sapply(pathways, length) > 0]
+
+    ps <- lapply(names(pathways), function(pn) {
+        p <- pathways[[pn]]
+        annotation <- fgseaRes[match(pn, fgseaRes$pathway), ]
+        list(
+            textGrob(pn, just="right", x=unit(0.95, "npc"),
+                     gp = gpar(col = "black", fontsize = 8)),
+            ggplot() +
+                geom_segment(aes(x=p, xend=p,
+                                 y=0, yend=statsAdj[p]),
+                             size=0.2) +
+                scale_x_continuous(limits=c(0, length(statsAdj)),
+                                   expand=c(0, 0)) +
+                scale_y_continuous(limits=c(-1, 1),
+                                   expand=c(0, 0)) +
+                xlab(NULL) + ylab(NULL) +
+                theme(panel.background = element_blank(),
+                      axis.line=element_blank(),
+                      axis.text=element_blank(),
+                      axis.ticks=element_blank(),
+                      panel.grid = element_blank(),
+                      axis.title=element_blank(),
+                      plot.margin = rep(unit(0,"null"),4),
+                      panel.spacing = rep(unit(0,"null"),4)
+                ),
+            textGrob(sprintf("%.2f", annotation$NES),
+                     gp = gpar(col = "black", fontsize = 8)),
+            textGrob(sprintf("%.1e", annotation$pval),
+                     gp = gpar(col = "black", fontsize = 8)),
+            textGrob(sprintf("%.1e", annotation$padj),
+                     gp = gpar(col = "black", fontsize = 8))
+            )
+    })
+
+    rankPlot <-
+        ggplot() +
+        geom_blank() +
+        scale_x_continuous(limits=c(0, length(statsAdj)),
+                           expand=c(0, 0)) +
+        scale_y_continuous(limits=c(-1, 1),
+                           expand=c(0, 0)) +
+        xlab(NULL) + ylab(NULL) +
+        theme(panel.background = element_blank(),
+              axis.line=element_blank(),
+              axis.text.y=element_blank(),
+              axis.ticks.y=element_blank(),
+              panel.grid = element_blank(),
+              axis.title=element_blank(),
+              plot.margin = unit(c(0,0,0.5,0), "npc"),
+              panel.spacing = unit(c(0,0,0,0), "npc")
+        )
+
+    grobs <- c(
+        lapply(c("Pathway", "Gene ranks", "NES", "pval", "padj"), textGrob),
+        unlist(ps, recursive = FALSE),
+        list(nullGrob(),
+             rankPlot,
+             nullGrob(),
+             nullGrob(),
+             nullGrob()))
+
+    # not drawing column if corresponding colwidth is set to zero
+    grobsToDraw <- rep(colwidths != 0, length(grobs)/length(colwidths))
+
+
+    p <- arrangeGrob(grobs=grobs[grobsToDraw],
+                 ncol=sum(colwidths != 0),
+                 widths=colwidths[colwidths != 0])
+
+    if (render) {
+        grid.draw(p)
+    } else {
+        p
+    }
+}
+```
+
+### fgsea for Gene-wide analysis
+
+```{r}
+# load(file = '../03.Results/rno.kegg.Rdata')
+# hallmark_sets = msigdbr(species = "rat", category = "H") %>% 
+#   mutate(name = str_replace(gs_name,'HALLMARK_', '')) %>% 
+#   mutate(name = str_replace_all(name, '_', ' ')) %>% 
+#   mutate(name = str_to_title(name)) %>% 
+#   select(gene_symbol, name) %>% 
+#   distinct()
+# 
+# hallmark_list = split(x = hallmark_sets$gene_symbol, f = hallmark_sets$name)
+# save(hallmark_list, hallmark_sets, file = '../03.Results/rno.msigdb.hallmark.Rdata')
+load('../03.Results/rno.msigdb.hallmark.Rdata')
+select = dplyr::select
+fgsea_groups = function(tissue, name) {
+  file = paste0('../03.Results/DESeq.', tissue, '.',name,'.txt')
+  DEG_res = read.table(file, sep = '\t', header = T) %>%
+    mutate(Group = name) 
+  
+  temp_res = DEG_res %>%
+    dplyr::select(gene_names, stat) %>%
+    na.omit() %>%
+    distinct() %>%
+    mutate(rank = rank(stat, ties.method = 'random')) %>%
+    arrange(desc(rank)) %>%
+    dplyr::select(gene_names, stat)
+  
+  temp_rank = deframe(temp_res)
+  temp_fgseaRes = fgsea(pathways = hallmark_list,
+                        stats = temp_rank,
+                        minSize = 15,
+                        maxSize = 500,
+                        nPermSimple = 1000)
+}
+
+save_gsea = function(tissue){
+  temp= fgsea_groups(tissue,'HSDvsCD')
+  temp1= fgsea_groups(tissue,'HSDJNK_D1vsHSD')
+  temp2= fgsea_groups(tissue,'HSDJNK_D2vsHSD')
+
+list_of_dataset = list('HSDvsCD' = temp,
+                       'HSDJNK_D1vsHSD' = temp1,
+                       'HSDJNK_D2vsHSD' = temp2)
+ write.xlsx(list_of_dataset, 
+           file = paste0('../02.Figures/21.GSEA.HSDigDB.hallmark.',tissue,'.xlsx'))
+}
+
+save_gsea('Liver')
+save_gsea('Adipose')
+save_gsea('Muscle')
+save_gsea('Brain')
+```
+
+### fgsea visualization
+
+```{r}
+fgsea2tissue= function(tissue){
+  index = removeindex('KEGG')
+  resHSD = read.xlsx(paste0('../02.Figures/21.GSEA.HSDigDB.hallmark.', tissue, '.xlsx'),
+                     sheet = 1) %>%
+    filter(!grepl(index, pathway, ignore.case = TRUE)) %>%
+    mutate(Group = 'Sucrose', Tissue = tissue)
+  
+  resJNK = read.xlsx(paste0('../02.Figures/21.GSEA.HSDigDB.hallmark.', tissue, '.xlsx'),
+                     sheet = 2) %>%
+    filter(!grepl(index, pathway, ignore.case = TRUE)) %>%
+    mutate(Group = 'Sucrose+JNK_D1', Tissue = tissue)
+  
+  resJNK_D2 = read.xlsx(paste0('../02.Figures/21.GSEA.HSDigDB.hallmark.', tissue, '.xlsx'),
+                        sheet = 3) %>%
+    filter(!grepl(index, pathway, ignore.case = TRUE)) %>%
+    mutate(Group = 'Sucrose+JNK_D2', Tissue = tissue)
+  
+  res = rbind(resHSD, resJNK, resJNK_D2)
+  return(res)
+}
+resFgeas = rbind(fgsea2tissue('Liver'),
+                 fgsea2tissue('Adipose'),
+                 fgsea2tissue('Muscle'),
+                 fgsea2tissue('Brain'))
+
+resFgeas_common = resFgeas %>% filter(padj < 0.05) %>% 
+  dplyr::select(pathway,Group,Tissue) %>% 
+  group_by(pathway) %>% tally() %>% 
+  filter(n > 5)
+
+resFgeas_P = resFgeas %>% filter(pathway %in% resFgeas_common$pathway) %>% 
+  left_join(resFgeas_common) %>% 
+  mutate(label = case_when(padj < 0.05 ~ '', TRUE ~ 'x')) %>% 
+  reorder_col(., 'Tissue') %>% 
+  mutate(Group = factor(Group, 
+                         levels = c("Sucrose",
+                                    "Sucrose+JNK_D1",
+                                    "Sucrose+JNK_D2"))) %>% 
+  mutate(pathway = reorder(pathway, n)) %>% 
+  ggplot(., aes(Tissue, pathway)) +
+  geom_point(aes(size = -log10(padj), color = NES)) +
+  facet_wrap(~Group, nrow = 1) +
+  geom_text(aes(label = label), size = 2.5, hjust = 0.5) +
+  scale_color_gradient2(mid = 'white', low = '#1c92d2', 
+                        high = '#b20a2c', midpoint = 0) +
+  theme_bw() +
+  plot_theme('nogrid') +
+  theme(
+    axis.text.y = element_text(color = 'black', size = 8),
+    axis.text.x = element_text(color = 'black', size = 8, 
+                               angle = 45, hjust = 1),
+    axis.title = element_blank()) +
+  scale_size(range = c(.5,5)) +
+  scale_y_discrete(expand = c(.05,.02))
+
+ggsave(resFgeas_P, filename = '../02.Figures/21.GSEA.msigdb.hallmark.4tissues.pdf',
+       width = 8, height = 4)
+```
+
+### Compass-based metabolic activity prediction
+### CompassR analysis
+-   Wilcox test and PCA
+```{r}
+compass_settings = CompassSettings$new(
+    user_data_directory = "../07_GEM",
+    metabolic_model_directory = '../07_GEM/extdata/RECON3',
+    cell_id_col_name = "ID",
+    gene_id_col_name = "name"
+)
+compass_data = CompassData$new(compass_settings)
+compass_analyzer = CompassAnalyzer$new(compass_settings)
+
+analyze_tissue = function(tissue) {
+  groups = c('Control', 'Sucrose', 'Sucrose+JNK_D1', 'Sucrose+JNK_D2')
+  result_list = list()
+  loop_names = NULL
+  m = 1
+  for (i in 1:(length(groups) - 1)) {
+    for (j in (i + 1):(length(groups))) {
+      group1 = groups[i]
+      group2 = groups[j]
+      if ((group1 == 'Control' & group2 %in% c('Sucrose+JNK_D1', 'Sucrose+JNK_D2')) |
+          (group1 %in% c('Sucrose+JNK_D1', 'Sucrose+JNK_D2') &
+            group2 %in% c('Sucrose+JNK_D1', 'Sucrose+JNK_D2'))) {
+        print(paste0('No need for comparison between:', group1, group2))
+      } else{
+        print(paste0('Correct:', group2, 'vs', group1))
+        group_A_cell_ids =
+          compass_data$cell_metadata %>%
+          filter(Group == group2) %>%
+          filter(Tissue == tissue) %>%
+          pull(ID)
+        group_B_cell_ids =
+          compass_data$cell_metadata %>%
+          filter(Group == group1) %>%
+          filter(Tissue == tissue) %>%
+          pull(ID)
+        wilcoxon_results =
+          compass_analyzer$conduct_wilcoxon_test(
+            compass_data$reaction_consistencies,
+            group_A_cell_ids,
+            group_B_cell_ids,
+            for_metareactions = FALSE
+        )
+        
+        compass_scores =
+          wilcoxon_results %>%
+          left_join(
+            dplyr::select(
+              compass_data$reaction_partitions,
+              "reaction_id",
+              "reaction_no_direction"
+            ),
+            by = "reaction_id"
+          ) %>%
+          mutate(reaction_no_direction = str_replace(reaction_no_direction, 'R_', '')) %>%
+          left_join(compass_data$reaction_metadata,
+                    by = c("reaction_no_direction" = "bigg_id"))
+        result_list[[m]] = compass_scores
+        loop_names = append(loop_names, paste0(group2,'vs',group1))
+        m = m+1
+      }
+    }
+  }
+  names(result_list) = loop_names
+  write.xlsx(result_list, file = paste0('../07_GEM/',tissue,"_Compass.reaction.xlsx"))
+}
+tissues = c('Liver', 'vWAT', 'SkM', 'Brain')
+for(i in tissues){
+  analyze_tissue(tissues[i])
+}
+save.image('JNK_compassR.Rdata')
+
+PCA = prcomp(t(compass_data$reaction_consistencies), scale. = T, center = T)
+reaction_pen = PCA$x[,1:2] %>% as.data.frame() %>%
+  rownames_to_column(., var = 'ID') %>% 
+  left_join(compass_data$cell_metadata) %>%  
+  mutate(Tissue = factor(Tissue, levels = c("Liver","vWAT","SkM","Brain"))) %>% 
+  mutate(Group = factor(Group, levels = c("Control","Sucrose","Sucrose+JNK_D1","Sucrose+JNK_D2"))) %>% 
+  ggplot(., aes(x=PC1, y=PC2, shape = Group, color = Tissue)) +
+  geom_point(size = 1.55) +
+  #stat_ellipse(geom="polygon",level=0.95,alpha=0.05,lwd = .1)+
+  theme_bw() +
+  plot_theme('nogrid') +
+  theme(
+    axis.text.y = element_text(color = 'black', size = 8),
+    axis.text.x = element_text(color = 'black', size = 8),
+    axis.title = element_text(color = 'black', size = 9),
+    legend.position = 'bottom') +
+  scale_color_manual(values = colorstudy('Tissue')) +
+  labs(x = paste0('PC1 (', 
+                  sprintf("%0.1f%%", summary(PCA)$importance[,1][2]*100), 
+                  ' variance)'),
+       y = paste0('PC2 (', 
+                  sprintf("%0.1f%%", summary(PCA)$importance[,2][2]*100), 
+                  ' variance)')) +
+  guides(color = guide_legend(nrow = 4), shape = guide_legend(nrow = 4))
+ggsave(reaction_pen, filename = '../02.Figures/28.Compass.GEM.pca.Recon3.pdf',
+       height = 3.8, width = 3)
+```
+### Compass-based Distribution of cohen's_d
+
+```{r, message=FALSE}
+visCompass = function(tissue){ 
+  fig_list = list()
+  compars = c("SucrosevsControl", "Sucrose+JNK_D1vsSucrose", "Sucrose+JNK_D2vsSucrose")
+  for(i in 1:3){
+  temp = read.xlsx(paste0('../07_GEM/', tissue, '_Compass.reaction.xlsx'),
+                   sheet = i) %>%
+    filter(adjusted_p_value < 0.05) %>%
+    filter(!is.na(subsytem)) %>% 
+    filter(!(subsytem == "Miscellaneous" | subsytem == "Extracellular exchange")) %>%
+    filter(!(startsWith(subsytem, "Transport") | startsWith(subsytem, "Exchange"))) %>%
+    mutate(Intervention = compars[i])
+    fig_list[[i]] = temp
+  }
+  combined = rbind(fig_list[[1]],fig_list[[2]],fig_list[[3]]) %>%
+    mutate(Intervention = case_when(Intervention == 'SucrosevsControl' ~ 'Sucrose',
+                             Intervention == 'Sucrose+JNK_D1vsSucrose' ~ 'Sucrose+JNK_D1',
+                             Intervention == 'Sucrose+JNK_D2vsSucrose' ~ 'Sucrose+JNK_D2')) %>% 
+    mutate(Intervention = factor(Intervention, levels = c("Sucrose","Sucrose+JNK_D1","Sucrose+JNK_D2"))) %>% 
+    ggplot(., aes(cohens_d, color = Intervention)) +
+    geom_freqpoly(binwidth = 0.1,  size= .8) +
+    scale_x_continuous(limits = c(-4, 4),
+                       breaks = c(-3, 0, 3),labels = c(-3, 0, 3)) +
+    theme_bw() +
+    plot_theme('nogrid') +
+    theme(
+      axis.title = element_text(color = 'black', size = 9),
+      axis.text = element_text(color = 'black', size = 8)
+    ) +
+    scale_color_manual(values = colorstudy('newGroup')[2:4]) +
+    labs(y = "Freq.", x = "Cohen's d") + ggtitle(tissue) +
+    ggeasy::easy_center_title() + ggeasy::easy_plot_title_size(8) +
+    scale_y_continuous(expand = c(0, 0))
+    
+  
+  return(combined)
+}
+
+
+      
+fig1 = visCompass('Liver')
+fig2 = visCompass('vWAT')
+fig3 = visCompass('SkM')
+fig4 = visCompass('Brain')
+
+com_p = ggarrange(fig1,fig2,fig3,fig4,common.legend = T,
+                 nrow = 2, ncol = 2, legend = 'right')
+
+ggsave(com_p, filename = '../02.Figures/29.Compass.GEM.Cohens_d.distribution.Recon3.pdf',
+       width = 7, height = 2.8)
+
+#save(STAT, file = '../02.Figures/29.Compass.GEM.Cohens_d.STAT.Rdata')
+load('../02.Figures/29.Compass.GEM.Cohens_d.STAT.Rdata')
+
+com_STAT_p = STAT %>%
+  mutate(Tissue = factor(Tissue, levels =c("Liver","vWAT","SkM","Brain"))) %>% 
+  mutate(dir = factor(dir, levels = c("up", "Down")))%>% 
+  ggplot(.,aes(Intervention, n, fill = dir)) + 
+  geom_bar(stat = 'identity', alpha = .6,width = 0.7, position = 'dodge') +
+  geom_text(aes(label = n),position = position_dodge(width = 0.9),
+            vjust = -.3, size = 2.5) + 
+  facet_wrap2(.~Tissue, nrow= 1, scales = 'free_y') + 
+  scale_fill_manual(values = c('#b20a2c',"#1c92d2")) + 
+  theme_bw() + plot_theme('grid') + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1,
+                                   size = 8, color = 'black'),
+        axis.text.y = element_text(size = 8, color = 'black'),
+        axis.title = element_blank(), legend.position = 'bottom') + 
+  scale_y_continuous(label = scales::label_comma(accuracy = 1)) +
+  facetted_pos_scales(
+    y = list(
+        Tissue == "vWAT" ~ scale_y_continuous(limits = c(0, 4000),
+                                              breaks = c(0, 2000,3500), 
+                                              labels = c(0, 2000,3500)),
+        Tissue == "Brain" ~ scale_y_continuous(limits = c(0,10),
+                                               breaks = c(0,5,10), 
+                                               labels = c(0,5,10)),
+        Tissue == "Liver" ~ scale_y_continuous(limits = c(0, 3500),
+                                               breaks = c(0, 1500,3000), 
+                                               labels = c(0, 1500,3000)),
+        Tissue == "SkM" ~ scale_y_continuous(limits = c(0, 3000),
+                                             breaks = c(0,2000,3000), 
+                                             labels = c(0,2000,3000))
+    )
+)
+
+ggsave(com_STAT_p, file = '../02.Figures/29.Compass.GEM.Cohens_d.STAT.pdf',
+       width = 6.8, height = 2.8)
+```
+
+### Compass-based Common reactions among tissues
+
+```{r}
+reac_list = list()
+m = 1
+ComRCompass = function() {
+  tissues = c("Liver", "vWAT", "SkM", "Brain")
+  compar = c("SucrosevsControl", "Sucrose+JNK_D1vsSucrose", "Sucrose+JNK_D2vsSucrose")
+  
+  for (j in 1:length(tissues)) {
+    for (i in 1:length(compar)) {
+      temp = read.xlsx(paste0('../07_GEM/',tissues[j],
+        '_Compass.reaction.xlsx'), sheet = i) %>%
+        filter(adjusted_p_value < 0.05) %>%
+        filter(!is.na(subsytem)) %>% 
+        filter(!(subsytem == "Miscellaneous" | subsytem == "Extracellular exchange")) %>%
+        filter(!(startsWith(subsytem, "Transport") | startsWith(subsytem, "Exchange"))) %>%
+        mutate()
+        dplyr::select(reaction_id) %>% pull()
+      reac_list[[m]] = temp
+      m = m + 1
+    }
+  }
+  return(reac_list)
+}
+
+reac_list =ComRCompass()
+names(reac_list) = c("Liver(SucrosevsControl)","Liver(Sucrose+JNK_D1vsSucrose)",
+                     "Liver(Sucrose+JNK_D2vsSucrose)",
+                     "vWAT(SucrosevsControl)","vWAT(Sucrose+JNK_D1vsSucrose)",
+                     "vWAT(Sucrose+JNK_D2vsSucrose)",
+                     "SkM(SucrosevsControl)","SkM(Sucrose+JNK_D1vsSucrose)",
+                     "SkM(Sucrose+JNK_D2vsSucrose)",
+                     "Brain(SucrosevsControl)","Brain(Sucrose+JNK_D1vsSucrose)",
+                     "Brain(Sucrose+JNK_D2vsSucrose)")
+
+reac_list = reac_list[lapply(reac_list,length)>0]
+
+r =intersect(intersect(intersect(intersect(intersect(reac_list[[1]], reac_list[[2]]), reac_list[[4]]),
+          reac_list[[5]]), reac_list[[7]]), reac_list[[8]])
+
+r =union(union(union(union(union(reac_list[[1]], reac_list[[2]]), reac_list[[3]]),
+          reac_list[[4]]), reac_list[[5]]), reac_list[[6]])
+
+#intersect(intersect(intersect(intersect(intersect(reac_list[[1]], reac_list[[2]]), reac_list[[3]]), reac_list[[4]]), reac_list[[6]]), reac_list[[7]])
+
+```
+
+### Compass-based Common reactions that signficantly differ in at least 2 tissues.
+
+```{r}
+all_reac = data.frame()
+ComRCompass = function() {
+  tissues = c("Liver", "vWAT", "SkM", "Brain")
+  compar = c("SucrosevsControl", "Sucrose+JNK_D1vsSucrose", "Sucrose+JNK_D2vsSucrose")
+  
+  for (j in 1:length(tissues)) {
+    for (i in 1:length(compar)) {
+      temp = read.xlsx(paste0('../07_GEM/',tissues[j],
+        '_Compass.reaction.xlsx'), sheet = i) %>%
+        mutate(Tissue = tissues[j], Group = compar[i])
+      all_reac = rbind(all_reac, temp)
+    }
+  }
+  return(all_reac)
+}
+
+all_reac =ComRCompass()
+
+comm_reac = all_reac %>% filter(adjusted_p_value < 0.05) %>%
+  filter(!is.na(subsytem)) %>% 
+  filter(!(subsytem == "Miscellaneous" | subsytem == "Extracellular exchange")) %>%
+  filter(!(startsWith(subsytem, "Transport") | startsWith(subsytem, "Exchange"))) %>% 
+  dplyr::select(reaction_id, Tissue, Group) %>% distinct() %>% 
+  group_by(reaction_id) %>% tally() %>% 
+  filter(n >5)
+  
+
+p = all_reac %>% filter(reaction_id %in% comm_reac$reaction_id) %>% 
+  filter(!is.na(subsytem)) %>% 
+  mutate(Tissue = factor(Tissue, 
+                         levels = c("Liver","vWAT","SkM","Brain"))) %>%
+   mutate(Group = factor(Group, 
+                         levels = c("SucrosevsControl","Sucrose+JNK_D1vsSucrose",
+                                    "Sucrose+JNK_D2vsSucrose"))) %>% 
+  arrange(subsytem, reaction_id) %>%
+  mutate(reaction_id = factor(reaction_id, levels = unique(reaction_id))) %>% 
+  mutate(cohens_d = case_when(adjusted_p_value < 0.05 ~ cohens_d, TRUE ~ 0)) %>%
+  ggplot(., aes(Tissue, reaction_id)) +
+  geom_tile(aes(fill = cohens_d, width=0.95),alpha = 0.8) +
+  facet_wrap(~Group) +
+  scale_fill_gradient2(mid = 'white', low = '#1c92d2', 
+                        high = '#b20a2c', midpoint = 0) +
+  theme_bw() +
+  theme(
+    #axis.text.y = element_text(color = 'black', size = 7),
+    axis.text.y = element_blank(),
+    axis.text.x = element_text(color = 'black', size = 8,
+                               angle = 45, hjust = 1),
+    axis.title = element_blank(),
+    legend.title = element_text(color = 'black', size = 8),
+    legend.text = element_text(color = 'black', size = 8),
+    legend.key.height = unit(.3, 'cm'),
+    legend.key.width = unit(.2, 'cm'),
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(),
+    strip.background = element_blank(),
+    strip.text = element_text(color = 'black', size = 8)) +
+  rremove('y.ticks')
+
+p1 = all_reac %>% filter(reaction_id %in% comm_reac$reaction_id) %>%  
+  filter(!is.na(subsytem)) %>% 
+  dplyr::select(reaction_id,subsytem) %>% 
+  distinct() %>% 
+  arrange(subsytem,reaction_id) %>% 
+  mutate(reaction_id = factor(reaction_id, levels = reaction_id)) %>% 
+  ggplot(., aes('', y=reaction_id, fill=subsytem)) +
+  geom_tile() + 
+  scale_y_discrete(position="left") +
+  theme_bw() + 
+  theme(axis.text = element_blank(), 
+        axis.ticks.x = element_blank(),
+         legend.title = element_text(color = 'black', size = 8),
+        legend.text = element_text(color = 'black', size = 8),
+      legend.key.height = unit(.4, 'cm'),
+      legend.key.width = unit(.3, 'cm'),
+    ) +
+  rremove('ticks') +
+  xlab(NULL) + ylab(NULL) +
+  #scale_fill_paletteer_d("ggsci::category20_d3")
+  #scale_fill_paletteer_d("vapoRwave::floralShoppe")
+ scale_fill_manual(values=as.vector(stepped2(13)))
+
+com = p %>% insert_left(p1, width=.05)
+ggsave(com, filename = '../02.Figures/29.Compass.GEM.Cohens_d.commR.Recon3.pdf',
+       width = 6, height = 4)
+```
+
+#### Barplot for specific reaction
+
+```{r}
+a = reaction['r1464_neg',] %>% rotate_df() %>% rownames_to_column(., var = 'ID') %>% left_join(metadata) %>% mutate(Tissue = factor(Tissue, levels = c("Liver","Adipose","Muscle","Brain"))) %>% ggplot(., aes(Group, r1464_neg, fill = Group)) + geom_bar(stat = 'summary', fun = mean, width = .7, position = position_dodge(width = 0.9)) + geom_jitter(color = 'grey2',position = position_dodge(width = 0.9), size = 1) + facet_wrap(~Tissue, nrow = 1) + scale_fill_manual(values = colors('oldGroup')) +
+  theme_bw() +
+    theme(
+        axis.text.y = element_text(color = 'black', size = 8),
+        axis.text.x = element_text(color = 'black', size = 8, 
+                                   angle = 45, hjust = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(color = 'black', size = 8),
+        legend.position = 'none',
+        panel.grid = element_blank(),
+        strip.background = element_blank(),
+        strip.text = element_text(color = 'black', size = 8))
+ggsave(a, filename = '../02.Figures/29.Compass.GEM.bar.MTHFD_pos.pdf',
+       width = 6, height = 2.5)
+
+```
+
+### Visualization of Cohen's D
+
+```{r}
+load('JNK.Compass.sig.Rdata')
+
+com1 = comm_reac %>% mutate(tissue2group = paste0(Group,'#',Tissue)) %>%
+  select(reaction_id, cohens_d, tissue2group) %>% 
+  spread(tissue2group, cohens_d) %>% 
+  column_to_rownames(., var = 'reaction_id') %>% as.matrix()
+ 
+com1[is.na(com1)] = 0
+
+anno = data.frame(ID = colnames(com1)) %>% 
+  mutate(Group = str_replace(ID, 'vs.*',''), 
+         Tissue = str_replace(ID, '.*#',''))
+
+column_ha = HeatmapAnnotation(Tissue = anno$Tissue,
+                              col = list(Tissue =  c("vWAT" = "#ba7a8d",
+                                                     "Brain" = "#6876a4",
+                                                     "Liver" = "#f0b64d",
+                                                     "SkM" = "#754817")),
+                              which="col",
+                              annotation_legend_param = list(
+                              labels_gp = gpar(fontsize = 8)))
+
+pdf('../02.Figures/39.Compass.conhensd.heatmap.pdf', width = 4.2, height = 4)
+hmap1 = Heatmap(as.matrix(com1), name = "Cohen's d",
+                cluster_columns = F,
+                show_row_dend = F,
+                top_annotation =column_ha, 
+                show_row_names = F,
+                column_split = anno$Group,
+                column_order = c(8,1,5,10,3,7,9,2,6,4),
+                heatmap_legend_param = list(
+                  legend_gp = gpar(fontsize = 8),
+                  labels_gp = gpar(fontsize = 8)),
+                column_names_gp = gpar(fontsize = 5), 
+                show_column_names = F,
+                column_title_gp = gpar(fontsize = 8)
+                )
+draw(hmap1)
+dev.off()
+save.image(file = 'Compass.Cohensd.heatmap.Rdata')
+```
+### Rat to Human orthlog Map and TPM mapping
+
+```{r}
+gencode_gene_map =  MotrpacRatTraining6moData::RAT_TO_HUMAN_GENE %>% 
+  dplyr::select(RAT_SYMBOL, HUMAN_ORTHOLOG_SYMBOL) %>% distinct() %>% 
+  set_colnames(.,c("gene","humanGene"))
+
+tpm_data = read.table('../07_GEM/JNK.ran.seq.txi.tpm.txt', 
+                      sep = '\t', header = T)
+
+
+reaction_metadata =
+  read_csv('../07_GEM/extdata/RECON2/reaction_metadata.csv') %>% 
+  dplyr::select(associated_genes) %>% filter(!associated_genes =='NA') %>% 
+  mutate(gene = strsplit(as.character(associated_genes), "; ")) %>%
+  unnest(gene) %>% 
+  dplyr::select(gene) %>% 
+  pull()
+
+tpm_data_orthlog = tpm_data %>% 
+  left_join(gencode_gene_map) %>% 
+  dplyr::select(humanGene, everything()) %>% 
+  filter(!is.na(humanGene)) %>% 
+  dplyr::select(-gene)
+
+tissue_tpm = function(data, tissue){
+  temp = data %>% select(humanGene, contains(tissue)) %>%
+    group_by(humanGene) %>% top_n(1) %>% ungroup() %>% 
+    column_to_rownames(., var = 'humanGene') %>%
+    mutate(mean = rowMeans(across(where(is.numeric)))) %>%
+    filter(mean > 1) %>% dplyr::select(-mean) %>% 
+    rownames_to_column(., var = 'humanGene') %>% 
+    select(humanGene, everything())
+    return(temp)
+}
+
+tpm_liver = tissue_tpm(tpm_data_orthlog, 'Liver')
+tpm_adipose = tissue_tpm(tpm_data_orthlog, 'Adipose')
+tpm_muscle = tissue_tpm(tpm_data_orthlog, 'Muscle')
+tpm_brain = tissue_tpm(tpm_data_orthlog, 'Brain')
+
+write.table(tpm_brain, 
+            file = '../07_GEM/JNK.ran.seq.txi.tpmHuamnOrthlog.Brain.txt',
+            sep = '\t', row.names = F, quote = F)
+
+write.table(tpm_data_orthlog, 
+            file = '../07_GEM/JNK.ran.seq.txi.tpmHuamnOrthlog.txt',
+            sep = '\t', row.names = F, quote = F)
+
+
+write.table(com_count_data_orthlog, 
+            file = '../07_GEM/JNK.ran.seq.txi.com_countHuamnOrthlog.txt',
+            sep = '\t', row.names = F, quote = F)
+
+
+write.csv(tpm_data_orthlog %>% dplyr::select(gene, humanGene), 
+          file = '../07_GEM/extdata/RECON3/gene_metadata.csv', quote = F,
+          row.names = F)
+```
+
+
+### Metabolic activity FOR STUDY DESIGN
+
+```{r}
+col_fun = colorRamp2(c(-1, 0, 2), c("white", "#D2DDF1", "#2F5597"))
+Heatmap(as.matrix(compass_data$reaction_consistencies[c(1035:1042),15:20]), show_row_names = F, show_column_names = F, show_column_dend = F, cluster_rows = F, col = col_fun,name = 'Reaction\nActivity', border = TRUE, rect_gp = gpar(col = "black", lwd = .1))
+```
+
+### log2fc correlation betwen JNK_D1 and JNK_D2 in tissue
+
+```{r}
+load('../03.Results/rno.kegg.Rdata')
+comFC = rbind(gene2FC('Muscle'),
+              gene2FC('Liver'),
+              gene2FC('Adipose'),
+              gene2FC('Brain')) %>% 
+  reorder_col(.,'Tissue') %>% 
+  #filter(padj < 0.01) %>% 
+  mutate(ID = paste0(Tissue,'.', Group)) %>% 
+  dplyr::select(gene_names, log2FoldChange, ID) %>% 
+  spread(ID, log2FoldChange) %>%
+  dplyr::select(-ends_with('JNK_D2'))
+
+genes = c('Hadhb','Echs1','Acot2',"Cfhr1","Angptl3","Slc10a1")
+b = comFC %>% 
+  dplyr::select(gene_names, `Liver.Sucrose+JNK_D1`, `SkM.Sucrose+JNK_D1`) %>%
+  na.omit() %>% 
+  mutate(label = case_when(gene_names %in% genes ~ gene_names, TRUE ~ ''))  %>% 
+  ggplot(., aes(`Liver.Sucrose+JNK_D1`, `SkM.Sucrose+JNK_D1`, label = label)) +
+    geom_point(size = .5, color = '#696969') +
+    geom_smooth(method = "lm",color = "black") +
+    geom_text_repel(size = 3.5, box.padding = 0.01,max.overlaps = Inf,
+                    color = 'blue') +
+    stat_cor(method = "spearman", cor.coef.name	= 'rho',
+             label.y.npc="top", label.x.npc = "left",label.y = 5) +
+    theme_pubr() +
+    labs(x = "Liver, log2FC (Sucrose+JNK_D1)", y = "SkM, log2FC (Sucrose+JNK_D1)") +
+    theme(axis.text = element_text(size = 8, colour = 'black'),
+          axis.title = element_text(size = 9, color = 'black'))
+
+genes2 = c("Lipc","Angptl3","Apob","Apoa2","Serpina12","Apoe")
+d = comFC %>% 
+  dplyr::select(gene_names, `vWAT.Sucrose+JNK_D1`, `SkM.Sucrose+JNK_D1`) %>%
+  na.omit() %>% 
+  mutate(label = case_when(gene_names %in% genes2 ~ gene_names, TRUE ~ ''))  %>% 
+  ggplot(., aes(`vWAT.Sucrose+JNK_D1`, `SkM.Sucrose+JNK_D1`, label = label)) +
+    geom_point(size = .5, color = 'darkgrey') +
+    geom_smooth(method = "lm",color = "black",) +
+   geom_text_repel(size = 3.5, box.padding = 0.01,max.overlaps = Inf, 
+                   color = 'blue') +
+    stat_cor(method = "spearman", cor.coef.name	= 'rho',
+             label.y.npc="top", label.x.npc = "left",label.y = 6) +
+    theme_pubr() +
+    labs(x = "vWAT, log2FC (Sucrose+JNK_D1)", y = "SkM, log2FC (Sucrose+JNK_D1)") +
+    theme(axis.text = element_text(size = 8, colour = 'black'),
+          axis.title = element_text(size = 9, color = 'black'))
+genes3 = c("Lep","Aldoa","Txn2","Got2")
+f = comFC %>% 
+  dplyr::select(gene_names, `Brain.Sucrose+JNK_D1`, `SkM.Sucrose+JNK_D1`) %>%
+  na.omit() %>% 
+  mutate(label = case_when(gene_names %in% genes3 ~ gene_names, TRUE ~ ''))  %>%
+  ggplot(., aes(`Brain.Sucrose+JNK_D1`, `SkM.Sucrose+JNK_D1`, label = label)) +
+    geom_point(size = .5, color = 'darkgrey') +
+    geom_smooth(method = "lm",color = "black") +
+    geom_text_repel(size = 3.5, box.padding = 0.01,max.overlaps = Inf, 
+                   color = 'blue') +
+    stat_cor(method = "spearman", cor.coef.name	= 'rho',
+             label.y.npc="top", label.x.npc = "left",label.y = 6) +
+    theme_pubr() +
+    labs(x = "Brain, log2FC (Sucrose+JNK_D1)", y = "SkM, log2FC (Sucrose+JNK_D1)") +
+    theme(axis.text = element_text(size = 8, colour = 'black'),
+          axis.title = element_text(size = 9, color = 'black'))
+com = ggarrange(b,d,f, nrow = 1, ncol = 3)
+ggsave(com, file = '../02.Figures/34.SkM.JNK_D1corOtherTissues.pdf',
+       width = 7.5, height = 2.6)
+```
+
+### Single-cell of multi-tissues of rat
+
+```{r}
+getGEO_meta = function(id){
+  temp = getGEO(id,GSEMatrix=TRUE)
+  save(temp, file = paste0(id,'_GEO.Rdata'))
+  pheno = temp[[1]]
+  sampleInfo = pData(pheno)
+  return(list(temp, sampleInfo))
+}
+
+GSE137869 = getGEO_meta('GSE137869')
+pheno = GSE137869[[2]] 
+
+for (file in paste0(pheno$geo_accession, '_', pheno$title)){
+        seurat_data <- Read10X(data.dir = paste0("../09.deconvolution/RAW/", file))
+        seurat_obj <- CreateSeuratObject(counts = seurat_data, project = file, min.cells = 5)
+        seurat_obj <- subset(seurat_obj, subset = nFeature_RNA > 500)
+        assign(file, seurat_obj)
+}
+```
+
+### Visualization of log2FoldChange
+
+```{r}
+#save(com1, anno, file = 'LogFC.heatmap.Rdata')
+load('LogFC.heatmap.Rdata')
+anno = data.frame(ID = colnames(com1)) %>% 
+  mutate(Group = str_replace(ID, '#.*',''), 
+         Tissue = str_replace(ID, '.*#',''))
+genes = c("Oxsm","Hsd17b12","Acot5","Acat1","Cpt2", "Acadvl","Eci3","Acads")
+row_ha = rowAnnotation(foo = anno_mark(at = c(286,2031,9874,4566,4879,5179,8311,9975), 
+                                       labels = genes))
+
+column_ha = HeatmapAnnotation(Tissue = anno$Tissue,
+                              col = list(Tissue =  c("vWAT" = "#ba7a8d",
+                                                     "Brain" = "#6876a4",
+                                                     "Liver" = "#f0b64d",
+                                                     "SkM" = "#754817")),
+                              which="col",
+                              annotation_legend_param = list(
+                              labels_gp = gpar(fontsize = 8)))
+
+pdf('../02.Figures/30.log2fc.heatmap.pdf', width = 4, height = 4)
+hmap1 = Heatmap(as.matrix(com1), name = "log2FC",
+                cluster_columns = F,
+                show_row_dend = F,
+                top_annotation =column_ha, 
+                right_annotation = row_ha,
+                show_row_names = F,
+                column_split = anno$Group,
+                column_order = c(2,4,3,1,6,8,7,5,10,12,11,9),
+                heatmap_legend_param = list(
+                  legend_gp = gpar(fontsize = 8),
+                  labels_gp = gpar(fontsize = 8)),
+                column_names_gp = gpar(fontsize = 5), 
+                show_column_names = T,
+                column_title_gp = gpar(fontsize = 8)
+                )
+draw(hmap1)
+dev.off()
+save.image(file = 'LogFC.heatmap.Rdata')
+```
+
+```{r}
+Module2BP = read.table(file = '../05.Coexpression/Coexp_Liver/DAVID.C0.txt',
+                          sep = '\t', header = T)
+
+GO = 
+  Module2BP %>% filter(Category == 'GOTERM_BP_DIRECT') %>%
+  top_n(10, -log(Bonferroni)) %>%
+  separate(Term, c("GOID", "Name"), sep = "\\~") %>%
+  mutate(Name = reorder(Name, Fold.Enrichment)) %>% 
+  ggplot(., aes(Fold.Enrichment, Name)) +
+  geom_point(aes(color = -log10(FDR))) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(color = 'black', size = 8),
+    axis.title.y = element_blank(),
+    axis.title.x = element_text(color = 'black', size = 8),
+    legend.title = element_text(color = 'black', size = 8),
+    legend.text = element_text(color = 'black', size = 8),
+    legend.key.height = unit(.25, 'cm'),
+    legend.key.width = unit(.25, 'cm'),
+    legend.position = 'right',
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank()) +
+  scale_color_gradient2(low = 'lightblue', high = 'blue') +
+  #scale_x_continuous(expand = c(0, 0), limits = c(0,NA)) +
+  labs(x ='Enrichment Score')
+ggsave(GO, filename = '../05.Coexpression/Coexp_Liver/DAVID.GO.C0.Liver.pdf', 
+       height = 2, width = 4)  
+```
+
+### Tissue module JC
+### Tissue module enrichr analysis
+```{r}
+gsoa_wgcna = list()
+work_dir = '../05.Coexpression/'
+select = dplyr::select
+jc2tissue = function(t1) {
+  t1_file = paste0(work_dir, 'Coexp_', t1, '/clust_pos_cluster.txt')
+  
+  t1_module = read.table(t1_file, header = T, sep = '\t') %>%
+    set_colnames(., c("Gene.name", "Module", "Degree")) 
+  
+  num_t1 = length(unique(t1_module$Module))
+  
+  for (i in 1:num_t1) {
+    gene = t1_module %>% filter(Module == i - 1) %>%
+      select(Gene.name) %>%
+      pull()
+    #dbs ="GO_Biological_Process_2023"
+    #dbs = "KEGG_2019_Human"
+    dbs = "MSigDB_Hallmark_2020"
+    
+    temp = enrichr(gene, dbs)$MSigDB_Hallmark_2020
+    temp = temp %>% mutate(ID = str_replace(Term, '.*\\(','')) %>%
+      mutate(ID = str_replace(ID, '\\).*','')) %>% 
+      filter(Adjusted.P.value < 0.05)
+    if (dim(temp)[1] != 0) {
+      print('Hello')
+      gsoa_wgcna[[i]]  = temp
+      # simMatrix = calculateSimMatrix(temp$ID,
+      #                                orgdb = "org.Rn.eg.db",
+      #                                ont = "BP",
+      #                                method = "Rel")
+      # 
+      # scores = setNames(-log10(temp$Adjusted.P.value), temp$ID)
+      # gsoa_wgcna[[i]] = reduceSimMatrix(simMatrix,
+      #                                   scores,
+      #                                   threshold = 0.7,
+      #                                   orgdb = "org.Rn.eg.db")
+    }
+    else{
+      gsoa_wgcna[[i]] = NULL
+    }
+  }
+  gsoa_wgcna %>%
+    sapply(nrow)
+  
+  
+  # output the result to excel file
+  if (file.exists(paste0(work_dir, 'Coexp_', t1, "/Module.GSO.HDSigDB.xlsx")))
+    unlink(paste0(work_dir, "Coexp_", t1, "/Module.GSO.HDSigDB.xlsx"))
+  for (i in 1:length(gsoa_wgcna)) {
+    if (!is.null(gsoa_wgcna[[i]])) {
+      xlsx::write.xlsx(
+        gsoa_wgcna[[i]],
+        paste0(work_dir, "Coexp_", t1, "/Module.GSO.HDSigDB.xlsx"),
+        sheetName = paste0('M',i-1),
+        append = T
+      )
+      gc()
+    }
+  }
+}
+jc2tissue("Muscle")
+jc2tissue("Liver")
+jc2tissue("Adipose")
+jc2tissue("Brain")
+```
+### tissue2module
+
+```{r}
+work_dir = '../05.Coexpression/'
+select = dplyr::select
+
+tissueModule = function(tissue) {
+  file = paste0(work_dir, 'Coexp_', tissue, '/clust_pos_cluster.txt')
+  module = read.table(file, header = T, sep = '\t') %>%
+    set_colnames(., c("Gene.name", "Module")) %>% 
+    mutate(Tissue = tissue,
+           Module = paste0('M',Module))
+}
+
+tissue2module = rbind(tissueModule("Liver"),
+      tissueModule("Adipose"),
+      tissueModule("Muscle"),
+      tissueModule("Brain"))
+
+tissue2module %>% mutate(Tissue = factor(Tissue, levels = c("Liver","Adipose","Muscle","Brain"))) %>% ggplot(.,
+       aes(x = Tissue, stratum = Module, alluvium = Gene.name,
+           fill = Module, label = Module)) +
+    geom_flow(stat = "alluvium", lode.guidance = "frontback",
+              aes(color = Module), alpha = .5) +
+    geom_stratum()
+```
+
+### JC between modules
+
+```{r}
+work_dir = '../05.Coexpression/'
+select = dplyr::select
+
+jc2tissue = function(t1, t2) {
+  t1_file = paste0(work_dir, 'Coexp_', t1, '/clust_pos_cluster.txt')
+  t2_file = paste0(work_dir, 'Coexp_', t2, '/clust_pos_cluster.txt')
+  
+  t1_module = read.table(t1_file, header = T, sep = '\t') %>%
+    set_colnames(., c("Gene.name", "Module","Degree"))
+  t2_module = read.table(t2_file, header = T, sep = '\t') %>%
+    set_colnames(., c("Gene.name", "Module", "Degree"))
+  
+  num_t1 = length(unique(t1_module$Module))
+  num_t2 = length(unique(t2_module$Module))
+  res_all = ''
+  for (i in 1:num_t1) {
+    genelist1 = t1_module %>% filter(Module == i - 1) %>%
+      select(Gene.name) %>%
+      pull()
+    for (j in 1:num_t2) {
+      gene1ist2 = t2_module %>% filter(Module == j - 1) %>%
+        select(Gene.name) %>%
+        pull()
+      x = intersect(genelist1, gene1ist2)
+      un = union(genelist1, gene1ist2)
+      JC = length(x) / length(un)
+      N = t1_module$Gene.name
+      m = intersect(N, genelist1)
+      n = intersect(N, gene1ist2)
+      p.value =
+        phyper(length(x) - 1,
+               length(m),
+               length(N) - length(m),
+               length(n),
+               lower.tail = FALSE)
+      temp = data.frame(
+        t1c = paste0(t1, ',M', i - 1),
+        t2c = paste0(t2, ',M', j - 1),
+        JaccardIndex = JC,
+        pval = p.value
+      )
+      res_all = rbind(res_all, temp)
+    }
+  }
+  res_all = res_all[-1, ]
+  return(res_all)
+}
+JCtable =rbind(jc2tissue("Liver","Muscle"),
+                 jc2tissue("Liver","Adipose"),
+                 jc2tissue("Liver","Brain")) %>%
+  mutate(padj = p.adjust(pval, method='BH'))
+
+p = JCtable %>% select(t1c, t2c, padj) %>%
+  convert(num(padj)) %>% spread(t1c, padj) %>%
+  column_to_rownames(., var = 't2c') %>% as.matrix()
+p[p< 0.05] = '*'
+p[p> 0.05] = ''
+
+JC = JCtable %>% select(t1c, t2c, JaccardIndex) %>% convert(num(JaccardIndex)) %>% spread(t1c, JaccardIndex) %>% column_to_rownames(., var = 't2c') %>% as.matrix()
+
+my_palette <- colorRampPalette(c("#f1eef6", "#d0d1e6",
+                                 "#a6bddb", "#74a9cf",
+                                 "#3690c0"))(n = 100)
+heatmap.2(
+  JC,
+  cellnote = p,
+  notecol = "black",
+  notecex = 1,
+  distfun = function(x) dist(x,method = 'euclidean'),
+  density.info = "none",
+  trace = "none",
+  margins = c(5, 10),
+  col = my_palette,
+  cexRow = 1,
+  dendrogram = 'row',
+  cexCol = 1,
+  srtCol = 45,
+  adjCol = c(.9, .2),
+  Colv = F,
+  Rowv = F
+)
+
+
+```
+
+### Module correlation by Cheng
+
+```{r}
+select = dplyr::select
+work_dir = '../05.Coexpression/TisssueAcross/'
+corrdif = function(t1, t2){
+  dif = read.table(paste0(work_dir,t1,'2',t2,'_module_corrdif.txt'),
+                   header = T) %>% 
+    gather(Tissue, cor, -modules)
+  pval = read.table(paste0(work_dir,t1,'2',t2,'_module_pval.txt'),
+                   header = T) %>% 
+    gather(Tissue, pval, -modules)
+  
+  dif_sbling = data.frame(modules = dif$Tissue,
+                          Tissue = dif$modules,
+                          cor = dif$cor)
+  
+   pval_sbling = data.frame(modules = pval$Tissue,
+                          Tissue = pval$modules,
+                          pval = pval$pval)
+   com_dif = rbind(dif, dif_sbling)
+   com_pval = rbind(pval, pval_sbling)
+   if(t1 == 'Liver' & t2 == 'Muscle'){
+     temp_pdif = data.frame(modules = dif$Tissue,
+                       Tissue = dif$modules,
+                       cor = dif$cor)
+    temp_pval = data.frame(modules = pval$Tissue,
+                       Tissue = pval$modules,
+                       pval = pval$pval)
+    dif = temp_pdif
+    pval = temp_pval
+   }
+   
+  #return(list(com_dif, com_pval))
+  return(list(dif, pval))
+}
+difall = rbind(
+  corrdif("Adipose", "Brain")[[1]],
+  corrdif("Adipose", "Liver")[[1]],
+  corrdif("Adipose", "Muscle")[[1]],
+  corrdif("Brain", "Liver")[[1]],
+  corrdif("Brain", "Muscle")[[1]],
+  corrdif("Liver", "Muscle")[[1]]
+)
+com = rbind(
+  corrdif("Adipose", "Brain")[[2]],
+  corrdif("Adipose", "Liver")[[2]],
+  corrdif("Adipose", "Muscle")[[2]],
+  corrdif("Brain", "Liver")[[2]],
+  corrdif("Brain", "Muscle")[[2]],
+  corrdif("Liver", "Muscle")[[2]]
+) %>%
+  left_join(difall) %>%
+  mutate(modules = str_replace(modules, 'Adipose', 'vWAT,M')) %>%
+  mutate(modules = str_replace(modules, 'Brain', 'Brain,M')) %>%
+  mutate(Tissue = str_replace(Tissue, 'Brain', 'Brain,M')) %>%
+  mutate(Tissue = str_replace(Tissue, 'Adipose', 'vWAT,M')) %>%
+  mutate(Tissue = str_replace(Tissue, 'Liver', 'Liver,M')) %>%
+  mutate(modules = str_replace(modules, 'Muscle', 'SkM,M'))
+
+
+module_degS = c("Liver,M0","Liver,M1","Liver,M2","Liver,M3","Liver,M4",
+"vWAT,M0","vWAT,M1","vWAT,M3","vWAT,M4","vWAT,M5","SkM,M0","SkM,M1","SkM,M2","SkM,M4","SkM,M5","Brain,M0","Brain,M1","Brain,M2","Brain,M5")
+a  =com %>% filter(modules %in% module_degS) %>% 
+  filter(Tissue %in% module_degS) %>% 
+  filter(str_detect(Tissue, 'Liver'))
+
+pdf(file = '../02.Figures/33.Modules.corr.intertissue.pdf',
+    width = 3, height = 5)
+com %>% filter(str_detect(Tissue, 'Liver'))%>% select(modules, Tissue, cor) %>% convert(num(cor)) %>%  spread(Tissue, cor) %>% column_to_rownames(., var = 'modules') %>% as.matrix()%>% pheatmap(., cluster_cols = F,color = viridis::viridis(7), name = 'Corr.',fontsize = 8)
+dev.off()
+
+
+```
+
+### Module topological correlation
+
+```{r}
+work_dir = '../05.Coexpression/'
+degree2tissue = function(t1, t2, name1, name2) {
+  t1_file = paste0(work_dir, 'Coexp_', t1, '/clust_pos_cluster.txt')
+  t2_file = paste0(work_dir, 'Coexp_', t2, '/clust_pos_cluster.txt')
+  
+  t1_module = read.table(t1_file, header = T, sep = '\t') %>%
+    set_colnames(., c("Gene.name", "Module","Degree_m1"))
+  t2_module = read.table(t2_file, header = T, sep = '\t') %>%
+    set_colnames(., c("Gene.name", "Module", "Degree_m2"))
+  
+  num_t1 = length(unique(t1_module$Module))
+  num_t2 = length(unique(t2_module$Module))
+  res_all = ''
+  for (i in 1:num_t1) {
+    genelist1 = t1_module %>% filter(Module == i - 1)
+    for (j in 1:num_t2) {
+      gene1ist2 = t2_module %>% filter(Module == j - 1) 
+      
+      x = intersect(genelist1$Gene.name, gene1ist2$Gene.name)
+      com = genelist1 %>% filter(Gene.name %in% x) %>%
+        select(-Module)%>% 
+        left_join(gene1ist2 %>% filter(Gene.name %in% x) %>% select(-Module)) %>% 
+        convert(num(c(Degree_m1, Degree_m2)))
+      if(length(x) < 3){
+        next
+      }else{
+        temp = data.frame(t1 = t1, t2 = t2,num_com = length(x),
+                        m1 = paste0(name1, ',M',i-1), 
+                        m2 = paste0(name2,',M',j-1),
+             p = cor.test(com$Degree_m1, com$Degree_m2)$p.value,
+             rho = cor.test(com$Degree_m1, com$Degree_m2)$estimate[[1]])
+      res_all = rbind(res_all, temp)
+  
+      }
+    }
+  }
+  res_all = res_all[-1, ]
+  return(res_all)
+}
+
+degreeCor = rbind(
+  degree2tissue("Muscle", "Liver", "SkM", "Liver"),
+  degree2tissue("Muscle", "Adipose", "SkM", "vWAT"),
+  degree2tissue("Muscle", "Brain", "SkM", "Brain"),
+  degree2tissue("Liver", "Brain", "Liver", "Brain"),
+  degree2tissue("Liver", "Adipose", "Liver", "vWAT"),
+  degree2tissue("Adipose", "Brain", "vWAT", "Brain")
+) %>% mutate(padj = p.adjust(p, method='BH'))
+
+
+```
+
+### Module 2 GO biological process
+
+```{r}
+select = dplyr::select
+work_dir = '../05.Coexpression/'
+module2enrichr = function(tissue,modules,name){
+  res_all = ''
+  for(i in modules){
+      temp = read.xlsx(paste0(work_dir,'Coexp_',tissue,'/Module.GSOA.xlsx'),
+                   sheet = i+1) %>% 
+    mutate(tissue2module = paste0(name,',M', i))
+      if(dim(temp)[[1]] != 0){
+       res_all = rbind(res_all, temp) 
+      }
+  }
+  res_all = res_all[-1,]
+  return(res_all)
+}
+
+module2BO = rbind(module2enrichr("Liver",c(0,1),"Liver"),
+              module2enrichr("Adipose",c(3,4),"vWAT"),
+              module2enrichr("Muscle",c(0,4),"SkM"),
+              module2enrichr("Brain",4,"Brain"))
+
+commonBP = module2BO %>% 
+  filter(parentSimScore > .9) %>%
+  mutate(Tissue = str_replace(tissue2module, ",.*", "")) %>% 
+  select(parentTerm,Tissue) %>%
+  distinct() %>% 
+  group_by(parentTerm) %>% tally() %>% 
+  filter(n >1)
+
+com = module2BO %>% 
+  select(parentTerm,tissue2module) %>%
+  filter(parentTerm %in% commonBP$parentTerm)%>%
+  distinct() %>%
+  left_join(commonBP) %>% 
+  mutate(tissue2module = factor(tissue2module,
+                                levels = c(
+                                           "Liver,M0",
+                                           "Liver,M1",
+                                           "vWAT,M3",
+                                           "vWAT,M4",
+                                           "SkM,M0",
+                                           "SkM,M4",
+                                           "Brain,M4"))) %>% 
+  mutate(Tissue = str_replace(tissue2module, ",.*", "")) %>% 
+  mutate(parentTerm = fct_reorder(parentTerm, desc(n))) %>% 
+  ggplot(.,
+       aes(axis1 = tissue2module, axis2 = parentTerm)) +
+  geom_alluvium(aes(fill = Tissue), width = 5/12) +
+  geom_stratum(width = 5/12) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)),
+              size = 3.5,discern=FALSE) +
+    ylab("Samples") + labs(fill = "Group") +
+    theme_void () +
+    theme(
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = 'none') +
+  scale_x_continuous(expand = range(.5,.5)) +
+ggsave(com, file = '../02.Figures/32.GOBP.multitissue.GO.v2.pdf',
+       width = 6, height = 6)
+```
+
+### Module 2 GO MsigDB hallmark
+
+```{r}
+work_dir = '../05.Coexpression/'
+module2enrichr = function(tissue,modules,name){
+  res_all = ''
+  for(i in modules){
+      temp = read.xlsx(paste0(work_dir,'Coexp_',tissue,'/Module.GSO.HDSigDB.xlsx'),
+                   sheet = i+1) %>% 
+    mutate(tissue2module = paste0(name,',M', i))
+      if(dim(temp)[[1]] != 0){
+       res_all = rbind(res_all, temp) 
+      }
+  }
+  res_all = res_all[-1,]
+  return(res_all)
+}
+
+module2Msigdb = rbind(module2enrichr("Liver",c(0,1),"Liver"),
+              module2enrichr("Adipose",c(1,3,4),"vWAT"),
+              module2enrichr("Muscle",c(0,1,4),"SkM"),
+              module2enrichr("Brain",4,"Brain"))
+
+commonMsigdb = module2Msigdb %>% 
+  mutate(Tissue = str_replace(tissue2module, ",.*", "")) %>% 
+  distinct() %>% 
+  group_by(Term) %>%
+  tally() %>% 
+  filter(n >2)
+
+com = module2Msigdb %>% 
+  filter(Term %in% commonMsigdb$Term)%>%
+  distinct() %>%
+  mutate(tissue2module = factor(tissue2module,
+                                levels = c(
+                                           "Liver,M0",
+                                           "Liver,M1",
+                                           "vWAT,M1",
+                                           "vWAT,M3",
+                                           "vWAT,M4",
+                                           "SkM,M0",
+                                           "SkM,M1",
+                                           "SkM,M4",
+                                           "Brain,M4"))) %>%
+  mutate(Tissue = str_replace(tissue2module, ",.*", "")) %>% 
+  mutate(Term = factor(Term, levels = rev(sort(unique(Term))))) %>%
+  mutate(Count = str_replace(Overlap, '\\/.*','')) %>% 
+  convert(num(Count, Adjusted.P.value)) %>% 
+  ggplot(., aes(tissue2module, Term)) + 
+  geom_point(aes(size = Count, fill = -log10(Adjusted.P.value)), shape = 21) + 
+  theme_bw() + 
+  plot_theme('nogrid')
+  theme(
+    axis.title.y = element_text(color = 'black', size = 9),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 9, color = 'black'),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1,
+                               size = 9, color = 'black'),
+    panel.background = element_blank(),
+    legend.title = element_text(color = 'black', size = 9),
+    legend.text = element_text(color = 'black', size = 8),
+    legend.key.height = unit(.4, 'cm'),
+    legend.key.width = unit(.4, 'cm')) +
+    #legend.position = 'top')+
+    scale_fill_gradient2(low = '#FFEFBA', high = '#FFC167') +
+    guides(colour = 'none')  + scale_size(range = c(1,5)) 
+
+ggsave(com, file = '../02.Figures/32.MSigDB_Hallmark.multitissue.pdf',
+       width = 8.2, height = 5)
+```
+### Module 2 KEGG pathways
+
+```{r}
+select = dplyr::select
+work_dir = '../05.Coexpression/'
+module2enrichr = function(tissue,modules,name){
+  res_all = ''
+  for(i in modules){
+      temp = read.xlsx(paste0(work_dir,'Coexp_',tissue,'/Module.GSOA.KEGG.xlsx'),
+                   sheet = i+1) %>% 
+    mutate(tissue2module = paste0(name,'.M', i))
+      if(dim(temp)[[1]] != 0){
+       res_all = rbind(res_all, temp) 
+      }
+  }
+  res_all = res_all[-1,]
+  return(res_all)
+}
+
+module2KEGG = rbind(module2enrichr("Liver",c(0,1,2,3),"Liver"),
+              module2enrichr("Adipose",c(0,1,2,3,4,5,6),"vWAT"),
+              module2enrichr("Muscle",c(0,1,2,3,4,5),"SkM"),
+              module2enrichr("Brain",c(0,1,2,3,4,5),"Brain"))
+
+index = c("Cancer","Infection","Disease","Glioma","Influenza",
+            "Arrhythmogenic Right Ventricular","Amyotrophic lateral sclerosis",
+            "Asthma","Leishmaniasis","Viral myocarditis","Toxoplasmosis",
+            "Diabetic cardiomyopathy","syndrome","diabetic complications",
+            "Cocaine addiction","Pertussis","Malaria","Bacterial invasion",
+            "Hepatitis","Carcinoma","Leukemia","Dilated Cardiomyopathy",
+            "Hypertrophic Cardiomyopathy Hcm","atherosclerosis","Depression",
+            "Melanoma","Diabetes Mellitus","Allograft rejection",
+            "Chemical carcinogenesis - reactive oxygen species",
+            "Rheumatoid arthritis","Spinocerebellar ataxia","Tuberculosis",
+            "Hypertrophic cardiomyopathy","Viral life cycle - HIV-1","addiction")
+  
+index = index %>% paste(., collapse = '|')
+
+commonKEGG = module2KEGG %>% 
+  filter(!grepl(index, Term, ignore.case = TRUE)) %>% 
+  convert(num(Adjusted.P.value)) %>% 
+  select(Term, tissue2module) %>% 
+  distinct() %>% 
+  group_by(Term) %>% 
+  tally() %>% 
+  filter(n >2)
+
+com = module2KEGG %>% 
+ # select(Term,tissue2module) %>%
+  filter(Term %in% commonKEGG$Term)%>%
+  distinct() %>%
+  left_join(commonKEGG) %>% 
+  convert(num(Adjusted.P.value)) %>% 
+  #filter(Adjusted.P.value < 0.01) %>% 
+  mutate(tissue2module = factor(tissue2module,
+                                levels = c(
+                                           "Liver.M0",
+                                           "Liver.M1",
+                                           "vWAT.M3",
+                                           "vWAT.M4",
+                                           "SkM.M0",
+                                           "SkM.M1",
+                                           "SkM.M4",
+                                           "Brain.M4"))) %>% 
+  mutate(Tissue = str_replace(tissue2module, "\\..*", "")) %>% 
+  mutate(Term = factor(Term, levels = rev(sort(unique(Term))))) %>%
+  mutate(Count = str_replace(Overlap, '\\/.*','')) %>% 
+  convert(num(Count)) %>%  
+  ggplot(., aes(tissue2module, Term)) + 
+  geom_point(aes(size = Count, fill = -log10(Adjusted.P.value)), shape = 21) + 
+  theme_bw() + 
+  theme(
+    axis.title.y = element_text(color = 'black', size = 9),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 8, color = 'black'),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8,
+                               vjust = 1, color = 'black'),
+    panel.background = element_blank(),
+    legend.title = element_text(color = 'black', size = 9),
+    legend.text = element_text(color = 'black', size = 8),
+    legend.key.height = unit(.4, 'cm'),
+    legend.key.width = unit(.4, 'cm')) +
+    #legend.position = 'top')+
+    scale_fill_gradient2(low = '#FFEFBA', high = 'orange') +
+    guides(colour = 'none')  + scale_size(range = c(1,5)) 
+### w6, H6
+ggsave(com, file = '../02.Figures/32.multitissue.KEGG.v1.pdf',
+       width = 7.8, height = 4.6)
+```
+
+### Module 2 TRRUST TF
+
+```{r}
+select = dplyr::select
+work_dir = '../05.Coexpression/'
+module2enrichr = function(tissue,modules,name){
+  res_all = ''
+  for(i in modules){
+      temp = read.xlsx(paste0(work_dir,'Coexp_',tissue,'/Module.GSOA.TRRUST.xlsx'),
+                   sheet = i+1) %>% 
+    mutate(tissue2module = paste0(name,'.M', i)) %>% 
+        filter(!str_detect(ID, 'human')) #%>% 
+      #top_n(10, -log10(Adjusted.P.value))
+      if(dim(temp)[[1]] != 0){
+       res_all = rbind(res_all, temp) 
+      }
+  }
+  res_all = res_all[-1,]
+  return(res_all)
+}
+
+module2TF = rbind(module2enrichr("Liver",0,"Liver"),
+              module2enrichr("Adipose",c(0,3,5),"vWAT"),
+              module2enrichr("Muscle",c(1,4,5),"SkM"),
+              module2enrichr("Brain",c(1,2),"Brain"))
+
+commonTF= module2TF %>% 
+  select(Term, tissue2module) %>% 
+  distinct() %>% 
+  group_by(Term) %>% 
+  tally() %>% 
+  filter(n >2)
+
+com = module2TF %>% 
+  filter(Term %in% commonTF$Term)%>%
+  distinct() %>%
+  left_join(commonTF) %>% 
+  mutate(tissue2module = factor(tissue2module,
+                                levels = c(
+                                           "Liver.M0",
+                                           "vWAT.M0",
+                                           "vWAT.M3",
+                                           "vWAT.M5",
+                                           "vWAT.M6",
+                                           "SkM.M1",
+                                           "SkM.M4",
+                                           "SkM.M5",
+                                           "Brain.M1",
+                                           "Brain.M2"))) %>% 
+  mutate(Tissue = str_replace(tissue2module, "\\..*", "")) %>% 
+  mutate(Term = str_replace(Term, ' mouse','')) %>% 
+  mutate(Term = fct_reorder(Term, desc(n))) %>% 
+  ggplot(.,
+       aes(axis1 = tissue2module, axis2 = Term)) +
+  geom_alluvium(aes(fill = Tissue), width = 5/12) +
+  geom_stratum(width = 5/12) +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)),
+              size = 3.5,discern=FALSE) +
+    ylab("Samples") + labs(fill = "Group") +
+    theme_void () +
+    theme(
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        panel.background = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = 'none') +
+  scale_x_continuous(expand = range(.5,.5)) +
+  scale_fill_manual(values = colors('Tissue'))
+
+### w6, H6
+ggsave(com, file = '../02.Figures/32.multitissue.KEGG.pdf',
+       width = 6, height = 5.5)
+```
+### Tissue module correlation
+```{r}
+work_dir = '../05.Coexpression/'
+corr.tissue = function(t1, t2, name1, name2) {
+  data = function(tissue){
+    load(paste0('../03.Results/DESeq.dds.', tissue, '.Rdata'))
+    vsd = vst(dds)
+    
+    return(vsd)
+  }
+  module_data = function(tissue, name){
+    GCN_file = paste0(work_dir, 'Coexp_', tissue, '/clust_pos_cluster.txt')
+    GCN_module = read.table(GCN_file, header = T, sep = '\t') %>%
+      set_colnames(., c("Gene.name", "Module", "Degree_m1")) %>%
+      mutate(Module = paste0(name, '.M', Module))
+   return(GCN_module)
+  }
+  
+  metadata = function(tissue){
+    col_anno = read_excel('../01.Data/metadata.xlsx') %>% filter(Note == 'Y') %>%
+    filter(Tissue == tissue) %>% filter(Group != 'HSD+JNK_D2') %>%
+    dplyr::select(ID, Group) %>%
+    column_to_rownames(., var = 'ID') %>%
+    mutate(
+      Group = case_when(
+        Group == 'CD' ~ 'Control',
+        Group == 'HSD' ~ 'Sucrose',
+        Group == 'HSD+JNK_D1' ~ 'Sucrose+JNK_D1'
+      )
+    )
+    return(col_anno)
+  }
+  
+  plot_pca = function(pcadata, percentVar, tissue){
+    temp_p = pcadata1 %>% 
+      rename(., c("conds" = 'Group')) %>% 
+      reorder_col('Group') %>% 
+      ggplot(., aes(x = PC1,y = PC2,color =factor(Group))) +
+      stat_ellipse(geom="polygon",level=0.95,alpha=0.05,lwd = .1)+
+      geom_point(size = 2, aes(color = factor(Group))) +
+      xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+      ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+      theme_bw() +
+      theme(axis.text = element_text(size = 8, color = 'black'), 
+            legend.position = 'none',
+        axis.title = element_text(size = 9, color = 'black')) +
+      scale_color_manual(values = colorstudy('newGroup')[1:3])
+    ggsave(temp_p, file = paste0('../02.Figures/35.module.pca.', tissue, '.pdf'),
+           width = 2, height = 2)
+  }
+  plot_cor = function(data, var1, var2, m1, m2){
+    temp_p = temp %>% 
+      mutate(Group = str_replace(IDmatched, '#.*', '')) %>% 
+      reorder_col('Group') %>% 
+      ggplot(., aes(m1, m2)) + 
+      geom_point(aes(color = Group), size = 1.5) +
+      geom_smooth(method = "lm",color = "black") +
+      stat_cor(method = "spearman", cor.coef.name	= 'rho',
+             label.y.npc="top", label.x.npc = "left",label.y = 20) +
+      xlab(paste0("PC1: ", var1, "% variance (",m1,")"))+
+      ylab(paste0("PC1: ", var2, "% variance (",m2 ,")"))+
+      theme_pubr() + 
+      scale_color_manual(values = colorstudy('newGroup')[1:3]) +
+      theme(axis.text = element_text(size = 8, colour = 'black'), 
+            axis.title = element_text(size = 9, color = 'black'),
+            legend.position = 'right')
+    ggsave(temp_p, file = paste0('../02.Figures/35.module.pca.cor.',m1,'&',m2,'.pdf'),
+           width = 4, height = 2)
+  }
+  
+  file_name = '../01.Data/24.10.22 HSD PLUS JNK STUDY.data.xlsx'
+  plasma_TG = read_excel(file_name, sheet = 2, skip = 1)[, c(2:28)] %>%
+    mutate(
+      IDmatched = case_when(
+        Group == 'CD' ~ paste0(Group, '#', Sample),
+        Group == 'HSD' ~ paste0(Group, '#', Sample),
+        Group == 'HSD+JNK_D1' ~ paste0(Group, '#', Sample),
+        Group == 'HSD+JNK_D2' ~ paste0(Group, '#', Sample)
+      )
+    ) %>%
+    select(IDmatched, Triglyceride)
+  
+  data_t1 = data(t1)
+  data_t2 = data(t2)
+  GCN_module1 = module_data(t1,name1)
+  GCN_module2 = module_data(t2, name2)
+  modules_t1 = sort(unique(GCN_module1$Module))
+  modules_t2 = sort(unique(GCN_module2$Module))
+  metadata_t1 = metadata(t1)
+  metadata_t2 = metadata(t2)
+  
+  res = ''
+  res.TG = ''
+  for (i in 1:length(modules_t1)) {
+    genes1 = GCN_module1 %>% filter(Module == modules_t1[i]) %>%
+      dplyr::select(Gene.name) %>% pull()
+    Z1 = data_t1[genes1, ]
+    Z1 = Z1[, rownames(metadata_t1)]
+    pcadata1 = plotPCA(Z1, intgroup = c("conds"), returnData = TRUE)
+    percentVar1 = round(100 * attr(pcadata1, "percentVar"))
+    #plot_pca(pcadata1, percentVar1,  modules_t1[i])
+    for (j in 1:length(modules_t2)) {
+      genes2 = GCN_module2 %>% filter(Module == modules_t2[j]) %>%
+      dplyr::select(Gene.name) %>% pull()
+      Z2 = data_t2[genes2, ]
+      Z2 = Z2[, rownames(metadata_t2)]
+      pcadata2 = plotPCA(Z2, intgroup = c("conds"), returnData = TRUE)
+      percentVar2 = round(100 * attr(pcadata2, "percentVar"))
+      #plot_pca(pcadata2, percentVar2, modules_t2[j])
+      
+      temp = pcadata1 %>% 
+        mutate(ID = str_replace_all(name, paste0('_',t1,'.*'), '')) %>%
+        separate(ID, into = c("Group", 'num'), '_') %>% 
+        mutate(IDmatched = case_when(
+          Group == 'Ctrl' ~ paste0('CD#', num),
+          Group == 'HSDCtrl' ~ paste0('HSD#', num),
+          Group == 'JNK30mg' ~ paste0('HSD+JNK_D1#', num))) %>%
+        select(-c(Group, num,group,conds,name)) %>% 
+        select(PC1,IDmatched) %>% 
+        set_colnames(., c(paste0(t1, '.PC1'),"IDmatched")) %>% 
+        left_join(pcadata2 %>%
+                    mutate(ID = str_replace_all(name, paste0('_',t2,'.*'), '')) %>%
+                    separate(ID, into = c("Group", 'num'), '_') %>%
+        mutate(IDmatched = case_when(
+          Group == 'Ctrl' ~ paste0('CD#', num),
+          Group == 'HSDCtrl' ~ paste0('HSD#', num),
+          Group == 'JNK30mg' ~ paste0('HSD+JNK_D1#', num))) %>%
+        select(-c(Group, num, group,conds,name)) %>% 
+        select(PC1,IDmatched) %>% 
+        set_colnames(., c(paste0(t2, '.PC1'),"IDmatched"))) %>% 
+        left_join(plasma_TG)
+      
+      colnames(temp) = c("m1","IDmatched","m2","Triglyceride")
+      cor = cor.test(temp$m1, temp$m2, method = 'spearman')
+      if(cor$p.value < 0.05){
+        #plot_cor(temp, percentVar1[1], percentVar2[1], modules_t1[i], modules_t2[j])
+      }
+      temp_res = data.frame(m1 = modules_t1[i], m2 = modules_t2[j],
+                            m1Var = percentVar1[1],m2Var = percentVar2[1],
+                            cor = cor$estimate,
+                            p = cor$p.value)
+      temp_res2.TG = data.frame(module = modules_t2[j], 
+                               p.TG = cor.test(temp$m2, temp$Triglyceride, method = 'spearman')$p.value,
+                               p.corTG = cor.test(temp$m2, temp$Triglyceride, method = 'spearman')$estimate)
+      res = rbind(res, temp_res)
+       temp_res1.TG = data.frame(module = modules_t1[i], 
+                               p.TG = cor.test(temp$m1, temp$Triglyceride, method = 'spearman')$p.value,
+                               p.corTG = cor.test(temp$m1, temp$Triglyceride, method = 'spearman')$estimate)
+       temp_res.TG = rbind(temp_res1.TG, temp_res2.TG)
+       res.TG = rbind(res.TG, temp_res.TG)
+    }
+  }
+  res = res[-1,]
+  res.TG = res.TG[-1,]
+  res.TG = res.TG %>% distinct()
+  return(list(res, res.TG))
+}
+res = rbind(corr.tissue('Muscle', 'Liver','SkM','Liver')[[1]],
+            corr.tissue('Muscle', 'Adipose','SkM','vWAT')[[1]],
+            corr.tissue('Muscle', 'Brain','SkM','Brain')[[1]],
+            corr.tissue('Liver', 'Brain','Liver','Brain')[[1]],
+            corr.tissue('Liver', 'Adipose','Liver','vWAT')[[1]],
+            corr.tissue('Adipose', 'Brain','vWAT','Brain')[[1]]) 
+
+res_TG = rbind(corr.tissue('Muscle', 'Liver','SkM','Liver')[[2]],
+            corr.tissue('Muscle', 'Adipose','SkM','vWAT')[[2]],
+            corr.tissue('Muscle', 'Brain','SkM','Brain')[[2]],
+            corr.tissue('Liver', 'Brain','Liver','Brain')[[2]],
+            corr.tissue('Liver', 'Adipose','Liver','vWAT')[[2]],
+            corr.tissue('Adipose', 'Brain','vWAT','Brain')[[2]]) 
+
+save(res, file = '../02.Figures/35.cor.crosstissue.Rdata')
+save(res_TG, file = '../02.Figures/35.corTG.tissueModule.Rdata')
+load('../02.Figures/35.cor.crosstissue.Rdata')
+
+cor_p  = res %>% convert(num(cor, p)) %>% 
+  mutate(padj = p.adjust(p, method = 'BH')) %>% 
+  filter(padj < 0.05) %>% 
+  ggplot(., aes(m1,m2)) + 
+  geom_point(aes(size = -log10(padj)), shape = 21, color = 'blue', stroke = 1) +
+  theme_bw() + 
+  plot_theme('grid') + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, 
+                                   size = 8, color = 'black'), 
+        axis.text.y = element_text(size = 8, color = 'black'), 
+        axis.title = element_blank())
+ggsave(cor_p, file = '../02.Figures/36.module.cor.allsig.pdf',
+       width = 3.2, height = 2.3)
+```
+

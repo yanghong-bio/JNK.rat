@@ -1,0 +1,21 @@
+"0","all_reac = data.frame()
+ComRCompass = function() {
+  tissues = c(""Liver"", ""vWAT"", ""SkM"", ""Brain"")
+  compar = c(""SucrosevsControl"", ""Sucrose+JNK_D1vsSucrose"", ""Sucrose+JNK_D2vsSucrose"")
+  
+  for (j in 1:length(tissues)) {
+    for (i in 1:length(compar)) {
+      temp = read.xlsx(paste0('../07_GEM/',tissues[j],
+        '_Compass.reaction.xlsx'), sheet = i) %>%
+        mutate(Tissue = tissues[j], Group = compar[i])
+      all_reac = rbind(all_reac, temp)
+    }
+  }
+  return(all_reac)
+}
+
+all_reac =ComRCompass()
+"
+"2","Error in read.xlsx.default(paste0(""../07_GEM/"", tissues[j], ""_Compass.reaction.xlsx""),  : 
+  File does not exist.
+"

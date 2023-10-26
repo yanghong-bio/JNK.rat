@@ -1,0 +1,25 @@
+"0","reaction_pen = PCA$x[,1:2] %>% as.data.frame() %>%
+  rownames_to_column(., var = 'ID') %>% 
+  left_join(compass_data$cell_metadata) %>%  
+  mutate(Tissue = factor(Tissue, levels = c(""Liver"",""vWAT"",""SkM"",""Brain""))) %>% 
+  mutate(Group = factor(Group, levels = c(""Control"",""Sucrose"",""Sucrose+JNK_D1"",""Sucrose+JNK_D2""))) %>% 
+  ggplot(., aes(x=PC1, y=PC2, shape = Group, color = Tissue)) +
+  geom_point(size = 1.55) +
+  #stat_ellipse(geom=""polygon"",level=0.95,alpha=0.05,lwd = .1)+
+  theme_bw() +
+  plot_theme('nogrid') +
+  theme(
+    axis.text.y = element_text(color = 'black', size = 8),
+    axis.text.x = element_text(color = 'black', size = 8),
+    axis.title = element_text(color = 'black', size = 9),
+    legend.position = 'bottom') +
+  scale_color_manual(values = colorstudy('Tissue')) +
+  labs(x = paste0('PC1 (', 
+                  sprintf(""%0.1f%%"", summary(PCA)$importance[,1][2]*100), 
+                  ' variance)'),
+       y = paste0('PC2 (', 
+                  sprintf(""%0.1f%%"", summary(PCA)$importance[,2][2]*100), 
+                  ' variance)')) +
+  guides(color = guide_legend(nrow = 4), shape = guide_legend(nrow = 4))
+"
+"2","Joining with `by = join_by(ID)`"
