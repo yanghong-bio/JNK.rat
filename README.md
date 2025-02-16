@@ -1,4 +1,4 @@
-# Impact of JNK inhibition on sucrose-induced metabolic dysfunction in rats
+# Multi-tissue network analysis reveals the effect of JNK inhibition on dietary sucrose-induced metabolic dysfunction in rats
 
 This repository contains the source files for the paper titled **Multi-tissue network analysis reveals the effect of JNK inhibition on dietary sucrose-induced metabolic dysfunction in rats. eLife13:RP98427. https://doi.org/10.7554/eLife.98427.2**. 
 
